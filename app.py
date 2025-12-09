@@ -264,7 +264,7 @@ elif aba == "Cadastro Projetos":
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0, format="%.2f")
-                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas", "Render", "Orçamento", "Consultoria"])
+                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas"])
                 link = st.text_input("Link Proposta (Drive)")
                 
             submitted = st.form_submit_button("Salvar Projeto")
@@ -306,7 +306,7 @@ elif aba == "Controle de Tarefas":
         with st.form("task_form", clear_on_submit=True):
             proj = st.selectbox("Projeto", lista_projetos)
             c1, c2, c3 = st.columns(3)
-            fase = c1.selectbox("Fase", ["Modelagem", "Compatibilização", "Pranchas", "Render"])
+            fase = c1.selectbox("Fase", ["Modelagem", "Compatibilização", "Pranchas"])
             resp = c2.selectbox("Responsável", ["GABRIEL", "MILENNA"])
             prio = c3.selectbox("Prioridade", ["Alta", "Média", "Baixa"])
             
