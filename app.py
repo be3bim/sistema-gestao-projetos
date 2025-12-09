@@ -230,11 +230,9 @@ if aba == "Dashboard":
 elif aba == "Cadastro Projetos":
     st.header("📂 Cadastro de Novos Projetos")
     
-    # Busca origens já cadastradas para alimentar a lista
-    if not df_projetos.empty and "Origem" in df_projetos.columns:
-        lista_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
-    else:
-        lista_origens = []
+    # Garantir que a coluna de histórico existe no DataFrame local
+    if "Historico_Log" not in df_projetos.columns:
+        df_projetos["Historico_Log"] = ""
 
     with st.expander("➕ Novo Projeto (Clique para abrir)", expanded=True):
         with st.form("form_projeto", clear_on_submit=True):
@@ -243,31 +241,15 @@ elif aba == "Cadastro Projetos":
             with c1:
                 cliente = st.text_input("Nome do Cliente")
                 cidade = st.text_input("Cidade da Obra")
-                
-                # --- NOVA LÓGICA DE ORIGEM SEPARADA ---
-                st.write("Origem do Cliente:")
-                # Escolha explicita do modo de entrada
-                modo_origem = st.radio("Como deseja informar a origem?", 
-                                     ["Selecionar Existente", "Cadastrar Nova"], 
-                                     horizontal=True, 
-                                     label_visibility="collapsed")
-                
-                if modo_origem == "Selecionar Existente":
-                    if lista_origens:
-                        origem = st.selectbox("Selecione a lista:", lista_origens)
-                    else:
-                        st.warning("Nenhuma origem cadastrada ainda. Use a opção 'Cadastrar Nova'.")
-                        origem = ""
-                else:
-                    origem = st.text_input("Digite a nova origem:", placeholder="Ex: Instagram, Indicação Arq. Ana...")
-                # ----------------------------------------
+                # Mudança solicitada: Campo livre simples
+                origem = st.text_input("Origem do Cliente (Indicação, Insta, etc)")
                 
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
             
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0, format="%.2f")
-                # Lista de serviços atualizada conforme pedido
+                # Lista de serviços restrita
                 servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas"])
                 link = st.text_input("Link Proposta (Drive)")
                 
@@ -276,8 +258,6 @@ elif aba == "Cadastro Projetos":
             if submitted:
                 if not cliente:
                     st.error("O nome do cliente é obrigatório.")
-                elif not origem:
-                    st.error("A origem é obrigatória.")
                 else:
                     novo = pd.DataFrame([{
                         "ID_Projeto": len(df_projetos) + 1,
@@ -290,37 +270,40 @@ elif aba == "Cadastro Projetos":
                         "Link_Proposta": link,
                         "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
                         "Status_Geral": "Ativo",
-                        "Cidade": cidade
+                        "Cidade": cidade,
+                        "Historico_Log": f"Criado em {get_now_br()}"
                     }])
                     
                     df_final = pd.concat([df_projetos, novo], ignore_index=True)
                     save_data(df_final, "Projetos")
-                    st.success(f"Projeto de {cliente} salvo! Origem '{origem}' registrada.")
+                    st.success(f"Projeto de {cliente} salvo com sucesso!")
                     st.rerun()
 
     st.divider()
     
-    # --- TABELA DE EDIÇÃO (CORREÇÃO DO ERRO TYPE COMPATIBILITY) ---
-    st.subheader("📋 Gerenciar Projetos Existentes")
+    # --- TABELA DE GERENCIAMENTO (COM CORREÇÃO DE ERRO E HISTÓRICO) ---
+    st.subheader("📋 Gerenciar Projetos e Status")
     
     if df_projetos.empty:
         st.info("Nenhum projeto cadastrado ainda.")
     else:
-        # Cria uma cópia para visualização/edição para não quebrar o dataframe original
+        # 1. PREPARAÇÃO DOS DADOS (Evita o erro do Link e Tipos)
         df_editor_view = df_projetos.copy()
-
-        # 1. BLINDAGEM DE NÚMEROS: Força tudo que não for número virar 0.0
+        
+        # Converte Links vazios (NaN) para string vazia "" para não dar erro de FLOAT
+        df_editor_view["Link_Proposta"] = df_editor_view["Link_Proposta"].astype(str).replace("nan", "")
+        
+        # Garante números
         df_editor_view["Proposta_Aceita_R$"] = pd.to_numeric(df_editor_view["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
         
-        # 2. BLINDAGEM DE DATAS: Força conversão. Se der erro (NaT), coloca a data de hoje para não travar
+        # Garante datas
         df_editor_view["Data_Cadastro"] = pd.to_datetime(df_editor_view["Data_Cadastro"], errors="coerce")
-        # Se houver datas inválidas (NaT), preenchemos com uma data padrão para a tabela não quebrar
-        # (Opcional: ou removemos as linhas com erro)
         df_editor_view["Data_Cadastro"] = df_editor_view["Data_Cadastro"].fillna(pd.Timestamp("2024-01-01"))
 
-        st.write("Edite status ou valores diretamente na tabela e clique em salvar:")
+        st.write("Altere o **Status** abaixo e clique em Salvar para registrar no histórico.")
         
         try:
+            # Exibição da Tabela
             df_editado = st.data_editor(
                 df_editor_view,
                 column_config={
@@ -330,30 +313,55 @@ elif aba == "Cadastro Projetos":
                         required=True,
                         width="medium"
                     ),
-                    "Proposta_Aceita_R$": st.column_config.NumberColumn(
-                        "Valor (R$)", 
-                        format="R$ %.2f"
-                    ),
-                    "Data_Cadastro": st.column_config.DateColumn(
-                        "Data", 
-                        format="DD/MM/YYYY"
-                    ),
-                    "Link_Proposta": st.column_config.LinkColumn("Proposta")
+                    "Proposta_Aceita_R$": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+                    "Data_Cadastro": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "Link_Proposta": st.column_config.LinkColumn("Proposta"),
+                    "Historico_Log": st.column_config.TextColumn("Histórico", disabled=True, width="large") # Histórico visível mas travado
                 },
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True
             )
             
-            if st.button("Salvar Alterações na Tabela"):
-                # Converte data de volta para string formato YYYY-MM-DD para salvar no Sheets
-                df_editado["Data_Cadastro"] = df_editado["Data_Cadastro"].dt.strftime("%Y-%m-%d")
-                save_data(df_editado, "Projetos")
-                st.success("Dados atualizados com sucesso!")
+            if st.button("Salvar Alterações de Projeto"):
+                has_changes = False
                 
+                # COMPARAÇÃO PARA GERAR HISTÓRICO
+                # Iteramos pelo dataframe editado para ver o que mudou em relação ao original (df_projetos)
+                # Nota: df_projetos pode ter indices diferentes se houve filtro, mas aqui assumimos ordem igual
+                # Para maior segurança, usamos o ID_Projeto se possível, mas aqui faremos por índice direto pela simplicidade do MVP
+                
+                for index, row in df_editado.iterrows():
+                    # Pega valor antigo (seguro contra index fora de ordem resetando index antes se necessário, 
+                    # mas o data_editor geralmente preserva a ordem se não houver sort)
+                    
+                    if index < len(df_projetos):
+                        valor_antigo = df_projetos.iloc[index]["Status_Geral"]
+                        valor_novo = row["Status_Geral"]
+                        
+                        if valor_antigo != valor_novo:
+                            msg = f"[{get_now_br()}] Status alterado: {valor_antigo} -> {valor_novo}."
+                            
+                            # Adiciona ao texto existente
+                            hist_antigo = str(row["Historico_Log"]) if pd.notna(row["Historico_Log"]) and row["Historico_Log"] != "nan" else ""
+                            df_editado.at[index, "Historico_Log"] = hist_antigo + " | " + msg
+                            has_changes = True
+
+                # Salva no Google Sheets
+                # 1. Reconverte data para string
+                df_editado["Data_Cadastro"] = df_editado["Data_Cadastro"].dt.strftime("%Y-%m-%d")
+                
+                save_data(df_editado, "Projetos")
+                
+                if has_changes:
+                    st.success("Status atualizado e registrado no histórico!")
+                else:
+                    st.success("Dados salvos!")
+                
+                st.rerun()
+
         except Exception as e:
-            st.error(f"Erro ao carregar tabela: {e}")
-            st.write("Dados brutos:", df_projetos) # Mostra os dados crus se a tabela falhar
+            st.error(f"Erro técnico na tabela: {e}")
 
 # ==============================================================================
 # ABA 3: CONTROLE DE TAREFAS (MANUTENÇÃO DO ANTERIOR)
