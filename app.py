@@ -227,7 +227,6 @@ if aba == "Dashboard":
 # ==============================================================================
 # ABA 2: CADASTRO PROJETOS (ATUALIZADO)
 # ==============================================================================
-
 elif aba == "Cadastro Projetos":
     st.header("📂 Cadastro de Novos Projetos")
     
@@ -245,31 +244,31 @@ elif aba == "Cadastro Projetos":
                 cliente = st.text_input("Nome do Cliente")
                 cidade = st.text_input("Cidade da Obra")
                 
-                # --- LÓGICA HÍBRIDA: SELECIONAR OU DIGITAR ---
+                # --- NOVA LÓGICA DE ORIGEM SEPARADA ---
                 st.write("Origem do Cliente:")
-                col_toggle, col_input = st.columns([1, 3])
+                # Escolha explicita do modo de entrada
+                modo_origem = st.radio("Como deseja informar a origem?", 
+                                     ["Selecionar Existente", "Cadastrar Nova"], 
+                                     horizontal=True, 
+                                     label_visibility="collapsed")
                 
-                # Botão de chave para alternar
-                usar_nova = col_toggle.toggle("Nova?", value=False, help="Ative para cadastrar uma origem que não está na lista")
-                
-                if usar_nova:
-                    # Modo Digitação (Para novas origens)
-                    origem = col_input.text_input("Digite a nova origem:", placeholder="Ex: Instagram, Indicação Fulano...")
-                else:
-                    # Modo Seleção (Para padronização)
+                if modo_origem == "Selecionar Existente":
                     if lista_origens:
-                        origem = col_input.selectbox("Selecione a origem:", lista_origens)
+                        origem = st.selectbox("Selecione a lista:", lista_origens)
                     else:
-                        # Se a lista estiver vazia (primeiro uso), força a digitação
-                        origem = col_input.text_input("Digite a origem (Lista vazia):")
-                # -----------------------------------------------
+                        st.warning("Nenhuma origem cadastrada ainda. Use a opção 'Cadastrar Nova'.")
+                        origem = ""
+                else:
+                    origem = st.text_input("Digite a nova origem:", placeholder="Ex: Instagram, Indicação Arq. Ana...")
+                # ----------------------------------------
                 
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
             
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0, format="%.2f")
-                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas", "Render", "Orçamento", "Consultoria"])
+                # Lista de serviços atualizada conforme pedido
+                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas"])
                 link = st.text_input("Link Proposta (Drive)")
                 
             submitted = st.form_submit_button("Salvar Projeto")
@@ -283,7 +282,7 @@ elif aba == "Cadastro Projetos":
                     novo = pd.DataFrame([{
                         "ID_Projeto": len(df_projetos) + 1,
                         "Cliente": cliente,
-                        "Origem": origem, # Salva o que foi digitado ou selecionado
+                        "Origem": origem,
                         "Tipo": tipo,
                         "Area_m2": area,
                         "Proposta_Aceita_R$": valor,
@@ -301,47 +300,60 @@ elif aba == "Cadastro Projetos":
 
     st.divider()
     
-    # --- AQUI ESTÁ A TABELA QUE HAVIA SUMIDO ---
+    # --- TABELA DE EDIÇÃO (CORREÇÃO DO ERRO TYPE COMPATIBILITY) ---
     st.subheader("📋 Gerenciar Projetos Existentes")
     
     if df_projetos.empty:
         st.info("Nenhum projeto cadastrado ainda.")
     else:
-        # Tratamento de erro para exibir a tabela corretamente
-        df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
-        df_projetos["Data_Cadastro"] = pd.to_datetime(df_projetos["Data_Cadastro"], errors="coerce")
+        # Cria uma cópia para visualização/edição para não quebrar o dataframe original
+        df_editor_view = df_projetos.copy()
+
+        # 1. BLINDAGEM DE NÚMEROS: Força tudo que não for número virar 0.0
+        df_editor_view["Proposta_Aceita_R$"] = pd.to_numeric(df_editor_view["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
+        
+        # 2. BLINDAGEM DE DATAS: Força conversão. Se der erro (NaT), coloca a data de hoje para não travar
+        df_editor_view["Data_Cadastro"] = pd.to_datetime(df_editor_view["Data_Cadastro"], errors="coerce")
+        # Se houver datas inválidas (NaT), preenchemos com uma data padrão para a tabela não quebrar
+        # (Opcional: ou removemos as linhas com erro)
+        df_editor_view["Data_Cadastro"] = df_editor_view["Data_Cadastro"].fillna(pd.Timestamp("2024-01-01"))
 
         st.write("Edite status ou valores diretamente na tabela e clique em salvar:")
         
-        df_editor = st.data_editor(
-            df_projetos,
-            column_config={
-                "Status_Geral": st.column_config.SelectboxColumn(
-                    "Status", 
-                    options=["Ativo", "Concluído", "Parado", "Cancelado"], 
-                    required=True,
-                    width="medium"
-                ),
-                "Proposta_Aceita_R$": st.column_config.NumberColumn(
-                    "Valor (R$)", 
-                    format="R$ %.2f"
-                ),
-                "Data_Cadastro": st.column_config.DateColumn(
-                    "Data", 
-                    format="DD/MM/YYYY"
-                ),
-                "Link_Proposta": st.column_config.LinkColumn("Proposta")
-            },
-            hide_index=True,
-            num_rows="dynamic",
-            use_container_width=True
-        )
-        
-        if st.button("Salvar Alterações na Tabela"):
-            # Converte data para string antes de enviar para o Google Sheets (evita bugs)
-            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str)
-            save_data(df_editor, "Projetos")
-            st.success("Dados atualizados com sucesso!")
+        try:
+            df_editado = st.data_editor(
+                df_editor_view,
+                column_config={
+                    "Status_Geral": st.column_config.SelectboxColumn(
+                        "Status", 
+                        options=["Ativo", "Concluído", "Parado", "Cancelado"], 
+                        required=True,
+                        width="medium"
+                    ),
+                    "Proposta_Aceita_R$": st.column_config.NumberColumn(
+                        "Valor (R$)", 
+                        format="R$ %.2f"
+                    ),
+                    "Data_Cadastro": st.column_config.DateColumn(
+                        "Data", 
+                        format="DD/MM/YYYY"
+                    ),
+                    "Link_Proposta": st.column_config.LinkColumn("Proposta")
+                },
+                hide_index=True,
+                num_rows="dynamic",
+                use_container_width=True
+            )
+            
+            if st.button("Salvar Alterações na Tabela"):
+                # Converte data de volta para string formato YYYY-MM-DD para salvar no Sheets
+                df_editado["Data_Cadastro"] = df_editado["Data_Cadastro"].dt.strftime("%Y-%m-%d")
+                save_data(df_editado, "Projetos")
+                st.success("Dados atualizados com sucesso!")
+                
+        except Exception as e:
+            st.error(f"Erro ao carregar tabela: {e}")
+            st.write("Dados brutos:", df_projetos) # Mostra os dados crus se a tabela falhar
 
 # ==============================================================================
 # ABA 3: CONTROLE DE TAREFAS (MANUTENÇÃO DO ANTERIOR)
