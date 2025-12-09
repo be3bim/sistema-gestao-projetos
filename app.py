@@ -227,6 +227,9 @@ if aba == "Dashboard":
 # ==============================================================================
 # ABA 2: CADASTRO PROJETOS (ATUALIZADO)
 # ==============================================================================
+# ==============================================================================
+# ABA 2: CADASTRO PROJETOS (ATUALIZADO COM LISTA INTELIGENTE)
+# ==============================================================================
 elif aba == "Cadastro Projetos":
     st.header("📂 Cadastro de Novos Projetos")
     
@@ -237,9 +240,25 @@ elif aba == "Cadastro Projetos":
                 cliente = st.text_input("Nome do Cliente")
                 cidade = st.text_input("Cidade da Obra")
                 
-                # Lista pré-definida de Origens para padronização
-                lista_origens = ["Indicação Cliente Antigo", "Indicação Parceiro/Arq", "Instagram", "Google/Site", "Networking/Eventos", "Outros"]
-                origem = st.selectbox("Origem do Cliente", lista_origens)
+                # --- LÓGICA DE ORIGEM DINÂMICA ---
+                # 1. Pega o que já existe no banco de dados (sem repetir e remove vazios)
+                if not df_projetos.empty and "Origem" in df_projetos.columns:
+                    # dropna() tira vazios, unique() tira repetidos, sorted() organiza A-Z
+                    historico_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
+                else:
+                    historico_origens = []
+
+                # 2. Adiciona opção de criar nova no topo ou fim
+                opcoes_origem = ["➕ Cadastrar Nova Origem..."] + historico_origens
+                
+                sel_origem = st.selectbox("Origem do Cliente", opcoes_origem)
+                
+                # 3. Se escolheu cadastrar nova, mostra o campo de texto. Se não, usa a seleção.
+                if sel_origem == "➕ Cadastrar Nova Origem...":
+                    origem = st.text_input("Digite a Nova Origem:")
+                else:
+                    origem = sel_origem
+                # ----------------------------------
                 
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
@@ -251,47 +270,28 @@ elif aba == "Cadastro Projetos":
             submitted = st.form_submit_button("Salvar Projeto")
             
             if submitted and cliente:
-                novo = pd.DataFrame([{
-                    "ID_Projeto": len(df_projetos) + 1,
-                    "Cliente": cliente,
-                    "Origem": origem,
-                    "Tipo": tipo,
-                    "Area_m2": area,
-                    "Proposta_Aceita_R$": valor,
-                    "Servicos": ", ".join(servicos),
-                    "Link_Proposta": link,
-                    "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
-                    "Status_Geral": "Ativo",
-                    "Cidade": cidade
-                }])
-                
-                # Concatena e salva
-                df_final = pd.concat([df_projetos, novo], ignore_index=True)
-                save_data(df_final, "Projetos")
-                st.success(f"Projeto de {cliente} salvo com sucesso!")
-                st.rerun()
-
-    st.divider()
-    st.subheader("📋 Edição Rápida")
-    if not df_projetos.empty:
-        # Tabela editável
-        df_editor = st.data_editor(
-            df_projetos,
-            column_config={
-                "Status_Geral": st.column_config.SelectboxColumn(
-                    "Status", options=["Ativo", "Concluído", "Parado", "Cancelado"], required=True
-                ),
-                "Proposta_Aceita_R$": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                "Data_Cadastro": st.column_config.DateColumn("Data", format="DD/MM/YYYY")
-            },
-            hide_index=True,
-            num_rows="dynamic"
-        )
-        
-        if st.button("Salvar Alterações"):
-            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str) # Conversão segura
-            save_data(df_editor, "Projetos")
-            st.success("Tabela atualizada!")
+                # Verifica se a origem foi preenchida corretamente
+                if not origem:
+                    st.error("Por favor, preencha a Origem do cliente.")
+                else:
+                    novo = pd.DataFrame([{
+                        "ID_Projeto": len(df_projetos) + 1,
+                        "Cliente": cliente,
+                        "Origem": origem, # Aqui entra o valor novo ou o selecionado
+                        "Tipo": tipo,
+                        "Area_m2": area,
+                        "Proposta_Aceita_R$": valor,
+                        "Servicos": ", ".join(servicos),
+                        "Link_Proposta": link,
+                        "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
+                        "Status_Geral": "Ativo",
+                        "Cidade": cidade
+                    }])
+                    
+                    df_final = pd.concat([df_projetos, novo], ignore_index=True)
+                    save_data(df_final, "Projetos")
+                    st.success(f"Projeto de {cliente} salvo! A origem '{origem}' foi gravada.")
+                    st.rerun()
 
 
 # ==============================================================================
