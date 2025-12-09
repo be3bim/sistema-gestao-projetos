@@ -3,7 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-import pytz # Para pegar o fuso horário do Brasil
+import pytz
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -13,31 +13,26 @@ st.set_page_config(
 )
 
 # --- FUNÇÕES UTILITÁRIAS ---
-
-# Formatação de Moeda Brasil
 def format_currency_br(value):
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Formatação de Data Brasil
 def format_date_br(date_obj):
     if pd.isnull(date_obj): return ""
-    # Se já for string, tenta converter, senão retorna
     try:
         return pd.to_datetime(date_obj).strftime("%d/%m/%Y")
     except:
         return str(date_obj)
 
-# Data e Hora atual Brasil
 def get_now_br():
     fuso_br = pytz.timezone('America/Sao_Paulo')
     return datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
 
-# --- CONEXÃO COM GOOGLE SHEETS ---
+# --- CONEXÃO ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data(worksheet_name):
     try:
-        return conn.read(worksheet=worksheet_name, ttl=0) # ttl=0 para não cachear e ver atualização na hora
+        return conn.read(worksheet=worksheet_name, ttl=0)
     except:
         return pd.DataFrame()
 
@@ -49,43 +44,208 @@ def save_data(df, worksheet_name):
 df_projetos = load_data("Projetos")
 df_tarefas = load_data("Tarefas")
 
-# Garantir colunas essenciais
+# Garantir colunas Projetos (Adicionado 'Cidade')
 cols_proj = ["ID_Projeto", "Cliente", "Origem", "Tipo", "Area_m2", "Proposta_Aceita_R$", 
-             "Servicos", "Link_Proposta", "Data_Cadastro", "Status_Geral"]
-if df_projetos.empty: df_projetos = pd.DataFrame(columns=cols_proj)
+             "Servicos", "Link_Proposta", "Data_Cadastro", "Status_Geral", "Cidade"]
+if df_projetos.empty: 
+    df_projetos = pd.DataFrame(columns=cols_proj)
+else:
+    if "Cidade" not in df_projetos.columns:
+        df_projetos["Cidade"] = ""
 
-# Adicionei 'Historico_Log' nas colunas
+# Garantir colunas Tarefas
 cols_task = ["ID_Projeto", "Fase", "Disciplina", "Descricao", "Responsavel", 
              "Data_Inicio", "Data_Deadline", "Prioridade", "Status", "Link_Tarefa", "Historico_Log"]
 if df_tarefas.empty: df_tarefas = pd.DataFrame(columns=cols_task)
 else:
-    # Se a coluna de histórico não existir no dataframe carregado, cria ela
-    if "Historico_Log" not in df_tarefas.columns:
-        df_tarefas["Historico_Log"] = ""
+    if "Historico_Log" not in df_tarefas.columns: df_tarefas["Historico_Log"] = ""
 
+# Tratamento de Tipos para Gráficos
+if not df_projetos.empty:
+    df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
+    df_projetos["Area_m2"] = pd.to_numeric(df_projetos["Area_m2"], errors="coerce").fillna(0.0)
 
-# --- SIDEBAR ---
+# --- MENU LATERAL ---
 st.sidebar.title("🏗️ Gestão Integrada")
-aba = st.sidebar.radio("Menu", ["Dashboard", "Cadastro Projetos", "Controle de Tarefas"])
+aba = st.sidebar.radio("Navegação", ["Dashboard", "Cadastro Projetos", "Controle de Tarefas"])
 
 # ==============================================================================
-# ABA 1: CADASTRO PROJETOS
+# ABA 1: DASHBOARD (REMODELADO)
 # ==============================================================================
-if aba == "Cadastro Projetos":
-    st.header("📂 Projetos e Clientes")
+if aba == "Dashboard":
+    st.header("📊 Visão Geral do Escritório")
     
-    with st.expander("➕ Novo Projeto (Clique para abrir)", expanded=False):
+    if df_projetos.empty:
+        st.warning("Cadastre projetos para visualizar o Dashboard.")
+    else:
+        # ================= SEÇÃO: PROJETOS =================
+        st.markdown("### 🏢 PROJETOS")
+        st.markdown("---")
+        
+        # Filtros
+        ativos = df_projetos[df_projetos["Status_Geral"] == "Ativo"]
+        concluidos = df_projetos[df_projetos["Status_Geral"] == "Concluído"]
+        parados = df_projetos[df_projetos["Status_Geral"].isin(["Suspenso", "Cancelado", "Parado"])]
+        
+        c1, c2, c3, c4 = st.columns(4)
+        
+        # 1. Ativos
+        c1.metric("Projetos Ativos", len(ativos))
+        with c1.expander("Ver Lista (Ativos)"):
+            if not ativos.empty:
+                st.dataframe(ativos[["Cliente", "Tipo"]], hide_index=True)
+            else:
+                st.write("Nenhum.")
+
+        # 2. Concluídos
+        c2.metric("Concluídos", len(concluidos))
+        with c2.expander("Ver Lista (Concluídos)"):
+            if not concluidos.empty:
+                st.dataframe(concluidos[["Cliente", "Data_Cadastro"]], hide_index=True)
+            else:
+                st.write("Nenhum.")
+
+        # 3. Parados
+        c3.metric("Parados/Suspensos", len(parados))
+        with c3.expander("Ver Lista (Parados)"):
+            if not parados.empty:
+                st.dataframe(parados[["Cliente", "Status_Geral"]], hide_index=True)
+            else:
+                st.write("Nenhum.")
+                
+        # 4. Total
+        c4.metric("Total Geral", len(df_projetos))
+
+        # ================= SEÇÃO: TAREFAS =================
+        st.markdown("### ✅ TAREFAS")
+        st.markdown("---")
+        
+        if not df_tarefas.empty:
+            # Preparação de Dados
+            df_tarefas["Data_Deadline"] = pd.to_datetime(df_tarefas["Data_Deadline"], errors="coerce")
+            hoje = pd.to_datetime(datetime.now().date())
+            
+            # Filtro Atrasadas (Não concluídas e data menor que hoje)
+            atrasadas = df_tarefas[
+                (df_tarefas["Status"] != "Concluído") & 
+                (df_tarefas["Data_Deadline"] < hoje)
+            ].copy()
+            
+            # Merge com nome do projeto
+            atrasadas = pd.merge(atrasadas, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+            
+            t1, t2 = st.columns([1, 3])
+            
+            t1.metric("Total de Tarefas", len(df_tarefas))
+            t1.metric("⚠️ Atrasadas", len(atrasadas), delta=-len(atrasadas), delta_color="inverse")
+            
+            with t2:
+                st.caption("📅 Carga de Trabalho (Tarefas por Data de Entrega)")
+                # Gráfico de Linha do Tempo
+                pendentes = df_tarefas[df_tarefas["Status"] != "Concluído"].copy()
+                if not pendentes.empty:
+                    pendentes["Data_Str"] = pendentes["Data_Deadline"].dt.strftime("%d/%m/%Y")
+                    contagem_data = pendentes.groupby("Data_Deadline").size().reset_index(name="Quantidade")
+                    
+                    fig_timeline = px.bar(contagem_data, x="Data_Deadline", y="Quantidade", 
+                                          title="Tarefas a Entregar por Dia", text_auto=True)
+                    fig_timeline.update_layout(xaxis_title="Data de Entrega", yaxis_title="Qtd Tarefas")
+                    st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # Lista Interativa de Atrasadas
+            st.subheader("🔥 Lista de Tarefas Atrasadas (Clique para ver detalhes)")
+            if not atrasadas.empty:
+                # Dataframe selecionável
+                event = st.dataframe(
+                    atrasadas[["Cliente", "Descricao", "Responsavel", "Data_Deadline"]],
+                    hide_index=True,
+                    on_select="rerun", # Permite clicar na linha
+                    selection_mode="single-row",
+                    use_container_width=True
+                )
+                
+                # Se alguém clicou em uma linha
+                if len(event.selection.rows) > 0:
+                    idx_selecionado = event.selection.rows[0]
+                    tarefa_detalhe = atrasadas.iloc[idx_selecionado]
+                    
+                    with st.container(border=True):
+                        st.markdown(f"**Detalhes da Tarefa: {tarefa_detalhe['Descricao']}**")
+                        c_d1, c_d2, c_d3 = st.columns(3)
+                        c_d1.write(f"**Projeto:** {tarefa_detalhe['Cliente']}")
+                        c_d2.write(f"**Responsável:** {tarefa_detalhe['Responsavel']}")
+                        c_d3.write(f"**Fase:** {tarefa_detalhe['Fase']}")
+                        st.warning(f"Era para ter entregue em: {format_date_br(tarefa_detalhe['Data_Deadline'])}")
+                        st.info(f"Link/Info: {tarefa_detalhe['Link_Tarefa'] or 'Sem link'}")
+            else:
+                st.success("Nenhuma tarefa atrasada! 🎉")
+
+        # ================= SEÇÃO: INDICADORES =================
+        st.markdown("### 📈 INDICADORES ESTRATÉGICOS")
+        st.markdown("---")
+        
+        ind1, ind2 = st.columns(2)
+        
+        # Gráfico Origem
+        with ind1:
+            fig_origem = px.pie(df_projetos, names="Origem", title="Origem dos Clientes", hole=0.4)
+            st.plotly_chart(fig_origem, use_container_width=True)
+            
+        # Gráfico Tipo de Obra
+        with ind2:
+            fig_tipo = px.pie(df_projetos, names="Tipo", title="Distribuição por Tipo de Obra")
+            st.plotly_chart(fig_tipo, use_container_width=True)
+            
+        # Métricas Financeiras e Área
+        st.markdown("#### 💰 Totais Acumulados")
+        m1, m2 = st.columns(2)
+        m1.info(f"**Total Contratado:** {format_currency_br(df_projetos['Proposta_Aceita_R$'].sum())}")
+        m2.info(f"**Área Total Projetada:** {df_projetos['Area_m2'].sum():,.0f} m²".replace(",", "."))
+        
+        # Gráficos de Barra (Serviço e Cidade)
+        g1, g2 = st.columns(2)
+        
+        with g1:
+            st.markdown("**Projetos por Tipo de Serviço**")
+            # Lógica para separar serviços (Ex: "BIM, Render" vira 1 BIM e 1 Render)
+            servicos_split = df_projetos["Servicos"].str.split(", ", expand=True).stack()
+            if not servicos_split.empty:
+                contagem_serv = servicos_split.value_counts().reset_index()
+                contagem_serv.columns = ["Servico", "Qtd"]
+                fig_serv = px.bar(contagem_serv, x="Qtd", y="Servico", orientation='h', text_auto=True)
+                st.plotly_chart(fig_serv, use_container_width=True)
+        
+        with g2:
+            st.markdown("**Projetos por Cidade**")
+            if "Cidade" in df_projetos.columns:
+                contagem_cid = df_projetos["Cidade"].value_counts().reset_index()
+                contagem_cid.columns = ["Cidade", "Qtd"]
+                fig_cid = px.bar(contagem_cid, x="Cidade", y="Qtd", text_auto=True)
+                st.plotly_chart(fig_cid, use_container_width=True)
+
+
+# ==============================================================================
+# ABA 2: CADASTRO PROJETOS (ATUALIZADO)
+# ==============================================================================
+elif aba == "Cadastro Projetos":
+    st.header("📂 Cadastro de Novos Projetos")
+    
+    with st.expander("➕ Novo Projeto (Clique para abrir)", expanded=True):
         with st.form("form_projeto", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 cliente = st.text_input("Nome do Cliente")
-                # Mudança: Origem agora é texto livre para colocar o nome do escritório
-                origem = st.text_input("Origem (Ex: Escritório XYZ, Indicação Fulano)")
+                cidade = st.text_input("Cidade da Obra")
+                
+                # Lista pré-definida de Origens para padronização
+                lista_origens = ["Indicação Cliente Antigo", "Indicação Parceiro/Arq", "Instagram", "Google/Site", "Networking/Eventos", "Outros"]
+                origem = st.selectbox("Origem do Cliente", lista_origens)
+                
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0, format="%.2f")
-                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas", "Render", "Orçamento"])
+                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas", "Render", "Orçamento", "Consultoria"])
                 link = st.text_input("Link Proposta (Drive)")
                 
             submitted = st.form_submit_button("Salvar Projeto")
@@ -101,81 +261,60 @@ if aba == "Cadastro Projetos":
                     "Servicos": ", ".join(servicos),
                     "Link_Proposta": link,
                     "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
-                    "Status_Geral": "Ativo"
+                    "Status_Geral": "Ativo",
+                    "Cidade": cidade
                 }])
-                save_data(pd.concat([df_projetos, novo], ignore_index=True), "Projetos")
-                st.success("Projeto salvo!")
+                
+                # Concatena e salva
+                df_final = pd.concat([df_projetos, novo], ignore_index=True)
+                save_data(df_final, "Projetos")
+                st.success(f"Projeto de {cliente} salvo com sucesso!")
                 st.rerun()
 
     st.divider()
-    st.subheader("📋 Gerenciar Projetos Existentes")
-    
+    st.subheader("📋 Edição Rápida")
     if not df_projetos.empty:
-        # --- CORREÇÃO DO ERRO DE TIPOS ---
-        # 1. Força a coluna de valor a ser número (transforma erro em 0.0)
-        df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
-        
-        # 2. Força a coluna de data a ser data real
-        df_projetos["Data_Cadastro"] = pd.to_datetime(df_projetos["Data_Cadastro"], errors="coerce")
-        # ---------------------------------
-
-        st.write("Edite o Status Geral diretamente na tabela abaixo:")
-        
-        # Configuração da coluna de Status como Dropdown
+        # Tabela editável
         df_editor = st.data_editor(
             df_projetos,
             column_config={
                 "Status_Geral": st.column_config.SelectboxColumn(
-                    "Status Geral",
-                    help="Status do contrato",
-                    width="medium",
-                    options=["Ativo", "Concluído", "Cancelado", "Suspenso"],
-                    required=True,
+                    "Status", options=["Ativo", "Concluído", "Parado", "Cancelado"], required=True
                 ),
-                "Proposta_Aceita_R$": st.column_config.NumberColumn(
-                    "Valor (R$)",
-                    format="R$ %.2f"
-                ),
-                "Data_Cadastro": st.column_config.DateColumn(
-                    "Data",
-                    format="DD/MM/YYYY"
-                )
+                "Proposta_Aceita_R$": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "Data_Cadastro": st.column_config.DateColumn("Data", format="DD/MM/YYYY")
             },
             hide_index=True,
             num_rows="dynamic"
         )
         
-        # Botão para salvar alterações feitas na tabela
-        if st.button("Salvar Alterações de Status/Dados"):
-            # Antes de salvar, garantimos que a data volte para string pro Google Sheets não bugar
-            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str)
+        if st.button("Salvar Alterações"):
+            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str) # Conversão segura
             save_data(df_editor, "Projetos")
-            st.success("Dados atualizados com sucesso!")
+            st.success("Tabela atualizada!")
 
 
 # ==============================================================================
-# ABA 2: CONTROLE DE TAREFAS
+# ABA 3: CONTROLE DE TAREFAS (MANUTENÇÃO DO ANTERIOR)
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Quadro de Atividades")
     
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
-    # Cadastro escondido no Expander
-    with st.expander("➕ Cadastrar Nova Tarefa", expanded=False):
+    with st.expander("➕ Cadastrar Nova Tarefa"):
         with st.form("task_form", clear_on_submit=True):
             proj = st.selectbox("Projeto", lista_projetos)
             c1, c2, c3 = st.columns(3)
-            fase = c1.selectbox("Fase", ["Modelagem", "Compatibilização", "Pranchas"])
-            # Responsáveis Fixos
+            fase = c1.selectbox("Fase", ["Modelagem", "Compatibilização", "Pranchas", "Render"])
             resp = c2.selectbox("Responsável", ["GABRIEL", "MILENNA"])
             prio = c3.selectbox("Prioridade", ["Alta", "Média", "Baixa"])
             
             desc = st.text_input("Descrição da Atividade")
-            # Datas com formato BR no input
             d_ini = st.date_input("Início", format="DD/MM/YYYY")
             d_fim = st.date_input("Prazo Final", format="DD/MM/YYYY")
-            
+            link_t = st.text_input("Link Arquivos")
+
             if st.form_submit_button("Adicionar Tarefa"):
                 id_p = df_projetos[df_projetos["Cliente"] == proj]["ID_Projeto"].values[0]
                 nova = pd.DataFrame([{
@@ -188,7 +327,7 @@ elif aba == "Controle de Tarefas":
                     "Data_Deadline": str(d_fim),
                     "Prioridade": prio,
                     "Status": "A Fazer",
-                    "Link_Tarefa": "",
+                    "Link_Tarefa": link_t,
                     "Historico_Log": f"Criado em {get_now_br()}"
                 }])
                 save_data(pd.concat([df_tarefas, nova], ignore_index=True), "Tarefas")
@@ -197,107 +336,54 @@ elif aba == "Controle de Tarefas":
 
     st.divider()
 
-    # --- VISUALIZAÇÃO POR CAIXAS DE PRIORIDADE ---
-    
     if df_tarefas.empty:
-        st.info("Nenhuma tarefa cadastrada.")
+        st.info("Nenhuma tarefa.")
     else:
-        # Merge para pegar nome do cliente
         df_full = pd.merge(df_tarefas, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
         
-        # Filtros globais
         responsaveis_filtro = st.multiselect("Filtrar Responsável", ["GABRIEL", "MILENNA"], default=["GABRIEL", "MILENNA"])
         df_full = df_full[df_full["Responsavel"].isin(responsaveis_filtro)]
 
-        # Loop para criar as 3 caixas: Alta, Média, Baixa
         ordem_prioridade = ["Alta", "Média", "Baixa"]
         cores = {"Alta": "🔴", "Média": "🟡", "Baixa": "🟢"}
 
         for prioridade_atual in ordem_prioridade:
-            # Filtra tarefas dessa prioridade específica
             subset = df_full[df_full["Prioridade"] == prioridade_atual]
-            subset = subset[subset["Status"] != "Concluído"] # Oculta concluídos das caixas principais
+            subset = subset[subset["Status"] != "Concluído"]
 
             if not subset.empty:
                 st.markdown(f"### {cores[prioridade_atual]} Prioridade {prioridade_atual}")
-                
                 for idx, row in subset.iterrows():
-                    # Caixa visual da tarefa
                     with st.container(border=True):
                         c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
-                        
-                        # Coluna 1: Info Principal
                         c1.markdown(f"**{row['Cliente']}**")
                         c1.caption(f"{row['Fase']} | {row['Descricao']}")
-                        
-                        # Coluna 2: Prazos
-                        data_fmt = format_date_br(row['Data_Deadline'])
-                        c2.text(f"📅 {data_fmt}")
+                        c2.text(f"📅 {format_date_br(row['Data_Deadline'])}")
                         c2.text(f"👤 {row['Responsavel']}")
                         
-                        # Coluna 3: Editar Prioridade
                         nova_prio = c3.selectbox("Prioridade", ["Alta", "Média", "Baixa"], 
                                                  index=["Alta", "Média", "Baixa"].index(row['Prioridade']),
                                                  key=f"prio_{idx}", label_visibility="collapsed")
                         
-                        # Coluna 4: Editar Status
-                        novo_status = c4.selectbox("Status", ["A Fazer", "Em Andamento", "Revisão", "Concluído"],
-                                                   index=["A Fazer", "Em Andamento", "Revisão", "Concluído"].index(row['Status']) if row['Status'] in ["A Fazer", "Em Andamento", "Revisão", "Concluído"] else 0,
-                                                   key=f"stat_{idx}", label_visibility="collapsed")
+                        opcoes_status = ["A Fazer", "Em Andamento", "Revisão", "Concluído"]
+                        idx_status = opcoes_status.index(row['Status']) if row['Status'] in opcoes_status else 0
+                        novo_status = c4.selectbox("Status", opcoes_status, index=idx_status, key=f"stat_{idx}", label_visibility="collapsed")
 
-                        # --- LÓGICA DE ATUALIZAÇÃO E HISTÓRICO ---
                         mudou = False
                         log_msg = ""
-
-                        # Verifica se mudou Prioridade
+                        
+                        # Detecta mudanças
                         if nova_prio != row['Prioridade']:
                             df_tarefas.at[idx, "Prioridade"] = nova_prio
-                            log_msg += f"[{get_now_br()}] Prio alterada: {row['Prioridade']} -> {nova_prio}. "
+                            log_msg += f"[{get_now_br()}] Prio: {row['Prioridade']}->{nova_prio}. "
                             mudou = True
-                        
-                        # Verifica se mudou Status
                         if novo_status != row['Status']:
                             df_tarefas.at[idx, "Status"] = novo_status
-                            log_msg += f"[{get_now_br()}] Status alterado: {row['Status']} -> {novo_status}. "
+                            log_msg += f"[{get_now_br()}] Status: {row['Status']}->{novo_status}. "
                             mudou = True
 
                         if mudou:
-                            # Adiciona ao histórico existente
                             hist_atual = str(df_tarefas.at[idx, "Historico_Log"]) if pd.notna(df_tarefas.at[idx, "Historico_Log"]) else ""
                             df_tarefas.at[idx, "Historico_Log"] = hist_atual + " | " + log_msg
-                            
                             save_data(df_tarefas, "Tarefas")
-                            st.toast(f"Tarefa atualizada!", icon="💾")
                             st.rerun()
-                        
-                        # Mostrar histórico num expander pequeno
-                        with st.expander("Ver Histórico de Alterações"):
-                            st.caption(str(row.get("Historico_Log", "Sem histórico")))
-
-# ==============================================================================
-# ABA 3: DASHBOARD
-# ==============================================================================
-elif aba == "Dashboard":
-    st.header("📊 Indicadores de Desempenho")
-    
-    if not df_projetos.empty:
-        # Converter colunas numéricas
-        df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors='coerce').fillna(0)
-        df_projetos["Area_m2"] = pd.to_numeric(df_projetos["Area_m2"], errors='coerce').fillna(0)
-        
-        kpi1, kpi2, kpi3 = st.columns(3)
-        kpi1.metric("Total Contratado", format_currency_br(df_projetos["Proposta_Aceita_R$"].sum()))
-        kpi2.metric("Área Total Projetada", f"{df_projetos['Area_m2'].sum():,.0f} m²".replace(",", "."))
-        kpi3.metric("Projetos Ativos", len(df_projetos[df_projetos["Status_Geral"] == "Ativo"]))
-
-        c1, c2 = st.columns(2)
-        
-        # Gráfico Origem (Agora que é texto livre, mostramos os Top 5)
-        origem_counts = df_projetos["Origem"].value_counts().head(7).reset_index()
-        origem_counts.columns = ["Origem", "Qtd"]
-        fig_orig = px.bar(origem_counts, x="Qtd", y="Origem", orientation='h', title="Top Origens de Clientes")
-        c1.plotly_chart(fig_orig, use_container_width=True)
-        
-        # Gráfico Tipo
-        fig_tipo = px.pie(df_projetos, names="Tipo", title="Distribuição por Tipo de Obra")
-        c2.plotly_chart(fig_tipo, use_container_width=True)
