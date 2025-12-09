@@ -227,57 +227,63 @@ if aba == "Dashboard":
 # ==============================================================================
 # ABA 2: CADASTRO PROJETOS (ATUALIZADO)
 # ==============================================================================
-# ==============================================================================
-# ABA 2: CADASTRO PROJETOS (ATUALIZADO COM LISTA INTELIGENTE)
-# ==============================================================================
+
 elif aba == "Cadastro Projetos":
     st.header("📂 Cadastro de Novos Projetos")
     
+    # Busca origens já cadastradas para alimentar a lista
+    if not df_projetos.empty and "Origem" in df_projetos.columns:
+        lista_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
+    else:
+        lista_origens = []
+
     with st.expander("➕ Novo Projeto (Clique para abrir)", expanded=True):
         with st.form("form_projeto", clear_on_submit=True):
             c1, c2 = st.columns(2)
+            
             with c1:
                 cliente = st.text_input("Nome do Cliente")
                 cidade = st.text_input("Cidade da Obra")
                 
-                # --- LÓGICA DE ORIGEM DINÂMICA ---
-                # 1. Pega o que já existe no banco de dados (sem repetir e remove vazios)
-                if not df_projetos.empty and "Origem" in df_projetos.columns:
-                    # dropna() tira vazios, unique() tira repetidos, sorted() organiza A-Z
-                    historico_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
-                else:
-                    historico_origens = []
-
-                # 2. Adiciona opção de criar nova no topo ou fim
-                opcoes_origem = ["➕ Cadastrar Nova Origem..."] + historico_origens
+                # --- LÓGICA HÍBRIDA: SELECIONAR OU DIGITAR ---
+                st.write("Origem do Cliente:")
+                col_toggle, col_input = st.columns([1, 3])
                 
-                sel_origem = st.selectbox("Origem do Cliente", opcoes_origem)
+                # Botão de chave para alternar
+                usar_nova = col_toggle.toggle("Nova?", value=False, help="Ative para cadastrar uma origem que não está na lista")
                 
-                # 3. Se escolheu cadastrar nova, mostra o campo de texto. Se não, usa a seleção.
-                if sel_origem == "➕ Cadastrar Nova Origem...":
-                    origem = st.text_input("Digite a Nova Origem:")
+                if usar_nova:
+                    # Modo Digitação (Para novas origens)
+                    origem = col_input.text_input("Digite a nova origem:", placeholder="Ex: Instagram, Indicação Fulano...")
                 else:
-                    origem = sel_origem
-                # ----------------------------------
+                    # Modo Seleção (Para padronização)
+                    if lista_origens:
+                        origem = col_input.selectbox("Selecione a origem:", lista_origens)
+                    else:
+                        # Se a lista estiver vazia (primeiro uso), força a digitação
+                        origem = col_input.text_input("Digite a origem (Lista vazia):")
+                # -----------------------------------------------
                 
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0, step=1.0)
+            
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0, format="%.2f")
-                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas"])
+                servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas", "Render", "Orçamento", "Consultoria"])
                 link = st.text_input("Link Proposta (Drive)")
                 
             submitted = st.form_submit_button("Salvar Projeto")
             
-            if submitted and cliente:
-                # Verifica se a origem foi preenchida corretamente
-                if not origem:
-                    st.error("Por favor, preencha a Origem do cliente.")
+            if submitted:
+                if not cliente:
+                    st.error("O nome do cliente é obrigatório.")
+                elif not origem:
+                    st.error("A origem é obrigatória.")
                 else:
                     novo = pd.DataFrame([{
                         "ID_Projeto": len(df_projetos) + 1,
                         "Cliente": cliente,
-                        "Origem": origem, # Aqui entra o valor novo ou o selecionado
+                        "Origem": origem, # Salva o que foi digitado ou selecionado
                         "Tipo": tipo,
                         "Area_m2": area,
                         "Proposta_Aceita_R$": valor,
@@ -290,9 +296,52 @@ elif aba == "Cadastro Projetos":
                     
                     df_final = pd.concat([df_projetos, novo], ignore_index=True)
                     save_data(df_final, "Projetos")
-                    st.success(f"Projeto de {cliente} salvo! A origem '{origem}' foi gravada.")
+                    st.success(f"Projeto de {cliente} salvo! Origem '{origem}' registrada.")
                     st.rerun()
 
+    st.divider()
+    
+    # --- AQUI ESTÁ A TABELA QUE HAVIA SUMIDO ---
+    st.subheader("📋 Gerenciar Projetos Existentes")
+    
+    if df_projetos.empty:
+        st.info("Nenhum projeto cadastrado ainda.")
+    else:
+        # Tratamento de erro para exibir a tabela corretamente
+        df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
+        df_projetos["Data_Cadastro"] = pd.to_datetime(df_projetos["Data_Cadastro"], errors="coerce")
+
+        st.write("Edite status ou valores diretamente na tabela e clique em salvar:")
+        
+        df_editor = st.data_editor(
+            df_projetos,
+            column_config={
+                "Status_Geral": st.column_config.SelectboxColumn(
+                    "Status", 
+                    options=["Ativo", "Concluído", "Parado", "Cancelado"], 
+                    required=True,
+                    width="medium"
+                ),
+                "Proposta_Aceita_R$": st.column_config.NumberColumn(
+                    "Valor (R$)", 
+                    format="R$ %.2f"
+                ),
+                "Data_Cadastro": st.column_config.DateColumn(
+                    "Data", 
+                    format="DD/MM/YYYY"
+                ),
+                "Link_Proposta": st.column_config.LinkColumn("Proposta")
+            },
+            hide_index=True,
+            num_rows="dynamic",
+            use_container_width=True
+        )
+        
+        if st.button("Salvar Alterações na Tabela"):
+            # Converte data para string antes de enviar para o Google Sheets (evita bugs)
+            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str)
+            save_data(df_editor, "Projetos")
+            st.success("Dados atualizados com sucesso!")
 
 # ==============================================================================
 # ABA 3: CONTROLE DE TAREFAS (MANUTENÇÃO DO ANTERIOR)
