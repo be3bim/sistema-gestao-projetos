@@ -111,7 +111,14 @@ if aba == "Cadastro Projetos":
     st.subheader("📋 Gerenciar Projetos Existentes")
     
     if not df_projetos.empty:
-        # Criação de uma tabela editável para mudar o Status do Cliente
+        # --- CORREÇÃO DO ERRO DE TIPOS ---
+        # 1. Força a coluna de valor a ser número (transforma erro em 0.0)
+        df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
+        
+        # 2. Força a coluna de data a ser data real
+        df_projetos["Data_Cadastro"] = pd.to_datetime(df_projetos["Data_Cadastro"], errors="coerce")
+        # ---------------------------------
+
         st.write("Edite o Status Geral diretamente na tabela abaixo:")
         
         # Configuração da coluna de Status como Dropdown
@@ -140,6 +147,8 @@ if aba == "Cadastro Projetos":
         
         # Botão para salvar alterações feitas na tabela
         if st.button("Salvar Alterações de Status/Dados"):
+            # Antes de salvar, garantimos que a data volte para string pro Google Sheets não bugar
+            df_editor["Data_Cadastro"] = df_editor["Data_Cadastro"].astype(str)
             save_data(df_editor, "Projetos")
             st.success("Dados atualizados com sucesso!")
 
