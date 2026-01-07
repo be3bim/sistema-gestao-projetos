@@ -203,7 +203,7 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (COM INTELIGÊNCIA COMERCIAL E PREÇO/M²)
+# ABA 2: DASHBOARD FINANCEIRO (COM ANÁLISE DE HORAS/EFICIÊNCIA)
 # ==============================================================================
 elif aba == "Dash Financeiro":
     ano_atual = datetime.now().year
@@ -213,13 +213,12 @@ elif aba == "Dash Financeiro":
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
-        # --- PREPARAÇÃO DOS DADOS ---
-        # 1. Financeiro (Entradas)
+        # --- PREPARAÇÃO DOS DADOS (Bloco padrão mantido) ---
         df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
         df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"], errors="coerce")
         df_fin_calc["Data_Pagamento"] = pd.to_datetime(df_fin_calc["Data_Pagamento"], errors="coerce")
         
-        # Data Híbrida (Caixa vs Competência)
+        # Data Híbrida
         df_fin_calc["Data_Considerada"] = df_fin_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
@@ -227,7 +226,7 @@ elif aba == "Dash Financeiro":
         df_fin_calc["Data_Considerada"] = pd.to_datetime(df_fin_calc["Data_Considerada"], errors="coerce")
         df_fin_calc["Ano_Ref"] = df_fin_calc["Data_Considerada"].dt.year
         
-        # 2. Despesas (Saídas)
+        # Despesas
         df_desp_calc = df_despesas.dropna(subset=["Vencimento"]).copy()
         df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"], errors="coerce")
         df_desp_calc["Data_Pagamento"] = pd.to_datetime(df_desp_calc["Data_Pagamento"], errors="coerce")
@@ -243,7 +242,7 @@ elif aba == "Dash Financeiro":
         entradas_ano = df_fin_calc[df_fin_calc["Ano_Ref"] == ano_atual]
         saidas_ano = df_desp_calc[df_desp_calc["Ano_Ref"] == ano_atual]
         
-        # Cálculos de Totais
+        # Totais
         receita_bruta = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor"].sum()
         impostos_pagos = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor_Imposto"].sum()
         custos_fixos_pagos = saidas_ano[saidas_ano["Status"] == "Pago"]["Valor"].sum()
@@ -258,11 +257,11 @@ elif aba == "Dash Financeiro":
         c2.metric("Impostos (15.5%)", format_currency_br(impostos_pagos), delta="- Gov", delta_color="inverse")
         c3.metric("Custos Fixos", format_currency_br(custos_fixos_pagos), delta="- Desp", delta_color="inverse")
         c4.metric("Lucro Líquido Real", format_currency_br(lucro_liquido), delta=f"{margem_lucro:.1f}%")
-        c5.metric("Previsão Futura", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar (Deste ano)")
+        c5.metric("Previsão Futura", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar")
 
         st.markdown("---")
         
-        # --- GRÁFICOS PRINCIPAIS (Fluxo) ---
+        # --- GRÁFICOS FLUXO ---
         g1, g2 = st.columns(2)
         with g1:
             st.subheader(f"📊 Composição Financeira")
@@ -291,19 +290,18 @@ elif aba == "Dash Financeiro":
                 fluxo_sai = pd.DataFrame()
             
             df_fluxo = pd.concat([fluxo_ent, fluxo_sai])
-            
             if not df_fluxo.empty:
                 df_fluxo = df_fluxo.sort_values("Mes")
                 fig_fluxo = px.bar(df_fluxo, x="Mes", y="Valor", color="Tipo", barmode="group",
                                    color_discrete_map={"Entrada": "#27AE60", "Saída": "#E74C3C"})
                 st.plotly_chart(fig_fluxo, use_container_width=True)
             else:
-                st.info("Sem movimentações neste ano.")
+                st.info("Sem movimentações.")
 
         st.markdown("---")
 
         # =========================================================
-        # NOVA SEÇÃO: INTELIGÊNCIA COMERCIAL
+        # SEÇÃO 1: INTELIGÊNCIA COMERCIAL
         # =========================================================
         st.subheader(f"🧠 Inteligência Comercial ({ano_atual})")
         
@@ -311,59 +309,67 @@ elif aba == "Dash Financeiro":
                               on="ID_Projeto", how="left")
         
         if df_analise.empty:
-            st.info("Não há receitas vinculadas a projetos neste ano para gerar análise.")
+            st.info("Sem dados comerciais.")
         else:
             col_i1, col_i2 = st.columns(2)
-            
             with col_i1:
-                st.markdown("**💰 Receita por Origem do Cliente**")
+                st.markdown("**💰 Receita por Origem**")
                 if "Origem" in df_analise.columns:
                     df_origem = df_analise.groupby("Origem")["Valor"].sum().reset_index()
                     if not df_origem.empty:
                         fig_origem = px.pie(df_origem, values="Valor", names="Origem", hole=0.4,
                                             color_discrete_sequence=px.colors.qualitative.Pastel)
                         st.plotly_chart(fig_origem, use_container_width=True)
-                    else:
-                        st.write("Sem dados de origem.")
 
             with col_i2:
-                st.markdown("**🏗️ Receita por Tipo de Obra**")
+                st.markdown("**🏗️ Receita por Tipo**")
                 if "Tipo" in df_analise.columns:
                     df_tipo = df_analise.groupby("Tipo")["Valor"].sum().reset_index()
                     if not df_tipo.empty:
-                        fig_tipo = px.bar(df_tipo, x="Valor", y="Tipo", orientation='h', text_auto=True,
-                                          title="O que mais faturou este ano")
+                        fig_tipo = px.bar(df_tipo, x="Valor", y="Tipo", orientation='h', text_auto=True)
                         st.plotly_chart(fig_tipo, use_container_width=True)
-                    else:
-                        st.write("Sem dados de tipo.")
 
-            col_i3, col_i4 = st.columns(2)
-
-            with col_i3:
-                st.markdown("**🗺️ Receita por Cidade**")
-                if "Cidade" in df_analise.columns:
-                    df_cid = df_analise.groupby("Cidade")["Valor"].sum().reset_index()
-                    fig_cid = px.bar(df_cid, x="Cidade", y="Valor", text_auto=True)
-                    st.plotly_chart(fig_cid, use_container_width=True)
-
-            with col_i4:
-                st.markdown("**📏 Preço Médio cobrado por m² (Estimativa)**")
-                ids_ativos_ano = df_analise["ID_Projeto"].unique()
-                df_proj_ano = df_projetos[df_projetos["ID_Projeto"].isin(ids_ativos_ano)].copy()
+            # =========================================================
+            # SEÇÃO 2: EFICIÊNCIA E HORAS (AQUI ESTÁ A NOVIDADE)
+            # =========================================================
+            st.markdown("---")
+            st.subheader("⏱️ Eficiência e Lucratividade Real (Horas Gastas)")
+            
+            # 1. Agrupar horas gastas por projeto (Tabela Tarefas)
+            horas_por_proj = df_tarefas.groupby("ID_Projeto")["Horas_Gastas"].sum().reset_index()
+            
+            # 2. Pegar valor de contrato (Tabela Projetos) - Pegamos apenas projetos ATIVOS ou CONCLUÍDOS RECENTES
+            proj_financeiro = df_projetos[["ID_Projeto", "Cliente", "Proposta_Aceita_R$"]].copy()
+            
+            # 3. Cruzar os dados
+            df_eficiencia = pd.merge(proj_financeiro, horas_por_proj, on="ID_Projeto", how="inner")
+            
+            # 4. Calcular Valor por Hora (R$/h)
+            # Evita divisão por zero
+            df_eficiencia = df_eficiencia[df_eficiencia["Horas_Gastas"] > 0] 
+            df_eficiencia["Valor_Hora_Real"] = df_eficiencia["Proposta_Aceita_R$"] / df_eficiencia["Horas_Gastas"]
+            
+            if not df_eficiencia.empty:
+                # Ordenar: Quem paga melhor primeiro
+                df_eficiencia = df_eficiencia.sort_values(by="Valor_Hora_Real", ascending=True)
                 
-                if not df_proj_ano.empty:
-                    df_proj_ano["Preco_m2"] = df_proj_ano["Proposta_Aceita_R$"] / df_proj_ano["Area_m2"]
-                    df_proj_ano = df_proj_ano[df_proj_ano["Preco_m2"] > 0]
-                    df_proj_ano = df_proj_ano.replace([float('inf'), -float('inf')], 0)
+                c_efic1, c_efic2 = st.columns([2, 1])
+                
+                with c_efic1:
+                    st.markdown("**🏆 Ranking: Valor Real da Hora Trabalhada (R$/h)**")
+                    st.caption("Quanto cada cliente está pagando efetivamente pelo seu tempo.")
+                    fig_hour = px.bar(df_eficiencia, x="Valor_Hora_Real", y="Cliente", orientation='h', text_auto=".2f",
+                                      color="Valor_Hora_Real", color_continuous_scale="RdYlGn")
+                    fig_hour.update_layout(xaxis_title="Valor por Hora (R$)", yaxis_title="")
+                    st.plotly_chart(fig_hour, use_container_width=True)
                     
-                    df_m2 = df_proj_ano.groupby("Tipo")["Preco_m2"].mean().reset_index()
-                    
-                    fig_m2 = px.bar(df_m2, x="Tipo", y="Preco_m2", text_auto=".2f",
-                                    title="Média de R$/m² por Tipo", 
-                                    labels={"Preco_m2": "Preço Médio (R$/m²)"})
-                    st.plotly_chart(fig_m2, use_container_width=True)
-                else:
-                    st.write("Dados insuficientes para cálculo de área.")
+                with c_efic2:
+                    st.markdown("**📉 Total de Horas Consumidas**")
+                    st.caption("Onde a equipe gastou mais tempo.")
+                    fig_pizza_h = px.pie(df_eficiencia, values="Horas_Gastas", names="Cliente", hole=0.4)
+                    st.plotly_chart(fig_pizza_h, use_container_width=True)
+            else:
+                st.info("Nenhuma hora registrada nos projetos ainda. Preencha o 'Timesheet' na aba Tarefas.")
 
 # ==============================================================================
 # ABA 3: CADASTRO PROJETOS
