@@ -274,7 +274,7 @@ elif aba == "Dash Financeiro":
                 st.success("Tudo em dia!")
 
 # ==============================================================================
-# ABA 3: CADASTRO PROJETOS (Agora com Tabela de Gestão de Status)
+# ABA 3: CADASTRO PROJETOS (VISUAL LIMPO E EDITÁVEL)
 # ==============================================================================
 elif aba == "Cadastro Projetos":
     st.header("📂 Projetos e Documentação")
@@ -284,6 +284,7 @@ elif aba == "Cadastro Projetos":
     else:
         lista_origens = []
 
+    # --- FORMULÁRIO (MANTIDO IGUAL) ---
     with st.expander("➕ Novo Projeto", expanded=False):
         with st.form("form_projeto", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -316,58 +317,67 @@ elif aba == "Cadastro Projetos":
                     st.rerun()
 
     st.divider()
-    
-    # --- TABELA DE GESTÃO DE STATUS (ADICIONADA NOVAMENTE) ---
-    st.subheader("📋 Gerenciar Carteira de Projetos")
-    if not df_projetos.empty:
-        st.info("Aqui você pode mudar o status para 'Concluído' ou corrigir dados.")
-        
-        # Preparar dados para edição segura
-        df_editor = df_projetos.copy()
-        
-        edited_df = st.data_editor(
-            df_editor,
-            column_config={
-                "Status_Geral": st.column_config.SelectboxColumn(
-                    "Status", options=["Ativo", "Concluído", "Cancelado", "Suspenso"], required=True
-                ),
-                "Proposta_Aceita_R$": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                "Link_Proposta": st.column_config.LinkColumn("Financ."),
-                "Link_Pasta_Executivo": st.column_config.LinkColumn("Proj."),
-                "ID_Projeto": st.column_config.NumberColumn("ID", disabled=True),
-                "Historico_Log": st.column_config.TextColumn("Log", disabled=True)
-            },
-            hide_index=True,
-            use_container_width=True,
-            num_rows="dynamic"
-        )
-        
-        if st.button("Salvar Alterações de Projetos"):
-            # Converter datas para string antes de salvar para não dar erro
-            edited_df["Data_Cadastro"] = pd.to_datetime(edited_df["Data_Cadastro"]).dt.strftime("%Y-%m-%d")
-            save_data(edited_df, "Projetos")
-            st.success("Carteira atualizada!")
-            st.rerun()
+    st.subheader("Gerenciar Carteira")
 
-    # --- ACESSO RÁPIDO (GED) ---
-    st.divider()
-    st.subheader("🗂️ Acesso Rápido (Ativos)")
-    if not df_projetos.empty:
-        ativos = df_projetos[df_projetos["Status_Geral"]=="Ativo"]
-        for idx, row in ativos.iterrows():
-            with st.container(border=True):
-                c_info, c_links = st.columns([2, 3])
-                c_info.markdown(f"**{row['Cliente']}** ({row['Cidade']})")
-                def criar_botao_seguro(label, link_url):
-                    url_str = str(link_url).strip()
-                    if url_str and url_str.lower() != "nan" and url_str != "None" and url_str != "":
-                        c_links.link_button(label, url_str)
-                criar_botao_seguro("💰 Financeiro", row["Link_Proposta"])
-                criar_botao_seguro("📂 Projetos", row["Link_Pasta_Executivo"])
-                criar_botao_seguro("🖼️ Renders", row["Link_Pasta_Renders"])
+    if df_projetos.empty:
+        st.info("Nenhum projeto cadastrado.")
+    else:
+        # Ordenar: Ativos primeiro
+        df_view = df_projetos.sort_values(by="Status_Geral", ascending=True)
 
+        for idx, row in df_view.iterrows():
+            # Ícone visual do status
+            icon_status = "🟢" if row['Status_Geral'] == 'Ativo' else "🏁"
+            
+            # O EXPANDER É O NOME DO PROJETO
+            with st.expander(f"{icon_status} {row['Cliente']} | {row['Cidade']}"):
+                
+                # Layout interno do Card
+                c_dados, c_links, c_edit = st.columns([2, 2, 2])
+                
+                # Coluna 1: Dados fixos
+                with c_dados:
+                    st.caption("Detalhes:")
+                    st.write(f"**Tipo:** {row['Tipo']}")
+                    st.write(f"**Área:** {row['Area_m2']} m²")
+                    st.write(f"**Serviços:** {row['Servicos']}")
+                
+                # Coluna 2: Links (Blindados)
+                with c_links:
+                    st.caption("Acesso Rápido:")
+                    def criar_botao(label, url):
+                        s_url = str(url).strip()
+                        if s_url and s_url.lower() != "nan":
+                            st.link_button(label, s_url)
+                    
+                    criar_botao("💰 Financeiro", row["Link_Proposta"])
+                    criar_botao("📂 Projetos", row["Link_Pasta_Executivo"])
+                    criar_botao("🖼️ Renders", row["Link_Pasta_Renders"])
+
+                # Coluna 3: Edição de Status
+                with c_edit:
+                    st.caption("Controle:")
+                    # Seletor de Status
+                    opcoes_status = ["Ativo", "Concluído", "Suspenso", "Cancelado"]
+                    idx_st = opcoes_status.index(row['Status_Geral']) if row['Status_Geral'] in opcoes_status else 0
+                    
+                    novo_status = st.selectbox("Situação do Projeto", opcoes_status, index=idx_st, key=f"st_proj_{idx}")
+                    
+                    # Botão Salvar Específico deste projeto
+                    if st.button("Atualizar Status", key=f"btn_up_{idx}"):
+                        if novo_status != row['Status_Geral']:
+                            df_projetos.at[idx, "Status_Geral"] = novo_status
+                            
+                            # Log histórico
+                            hist = str(df_projetos.at[idx, "Historico_Log"])
+                            msg = f" | Status alterado para {novo_status} em {get_now_br()}"
+                            df_projetos.at[idx, "Historico_Log"] = hist + msg
+                            
+                            save_data(df_projetos, "Projetos")
+                            st.success("Atualizado!")
+                            st.rerun()
 # ==============================================================================
-# ABA 4: CONTROLE DE TAREFAS
+# ABA 4: CONTROLE DE TAREFAS (AJUSTE DE LAYOUT STATUS)
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Atividades e Timesheet")
@@ -414,10 +424,12 @@ elif aba == "Controle de Tarefas":
                         c1.markdown(f"**{row['Cliente']}**")
                         c1.text(f"{row['Descricao']}")
                         c2.text(f"Até: {format_date_br(row['Data_Deadline'])}")
-                        st.write("Status:")
+                        
+                        # MUDANÇA AQUI: Label dentro do componente para alinhar
                         novo_status = c3.selectbox("Status", ["A Fazer", "Em Andamento", "Revisão", "Concluído"], 
                                                    index=["A Fazer", "Em Andamento", "Revisão", "Concluído"].index(row['Status']), 
-                                                   key=f"s_{idx}", label_visibility="collapsed")
+                                                   key=f"s_{idx}")
+                                                   
                         horas = c4.number_input("Horas Gastas", value=float(row.get("Horas_Gastas", 0.0)), step=0.5, key=f"h_{idx}")
                         
                         if c4.button("💾 Salvar", key=f"b_{idx}"):
@@ -441,17 +453,15 @@ elif aba == "Controle de Tarefas":
                             df_tarefas.at[idx, "Data_Conclusao"] = ""
                             save_data(df_tarefas, "Tarefas")
                             st.rerun()
-
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO (AGRUPADO POR PROJETO)
+# ABA 5: CONTROLE FINANCEIRO (TITULO LIMPO)
 # ==============================================================================
 elif aba == "Controle Financeiro":
     st.header("💰 Lançamentos e Baixas")
     
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
-    # --- FORMULÁRIO DE LANÇAMENTO ---
-    with st.expander("➕ Novo Lançamento (Clique para abrir)", expanded=True):
+    with st.expander("➕ Novo Lançamento", expanded=True):
         with st.form("fin_form", clear_on_submit=True):
             c1, c2, c3 = st.columns([2, 2, 1])
             proj_fin = c1.selectbox("Projeto", lista_projetos)
@@ -474,7 +484,6 @@ elif aba == "Controle Financeiro":
                     }])
                     
                     df_final = pd.concat([df_financeiro, novo_fin], ignore_index=True)
-                    # Força conversão de data para string segura
                     df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
                     save_data(df_final, "Financeiro")
                     st.success("Lançamento registrado!")
@@ -482,39 +491,28 @@ elif aba == "Controle Financeiro":
     
     st.divider()
     
-    # --- EXTRATO AGRUPADO POR PROJETO ---
     if not df_financeiro.empty:
         st.subheader("Extrato por Projeto")
-        
-        # Preparar dados: Junta com tabela de projetos para pegar o nome do Cliente
         df_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
-        
-        # Pegar lista de projetos que têm lançamentos
         projetos_com_fin = df_view["Cliente"].unique()
         
         if len(projetos_com_fin) == 0:
             st.info("Nenhum lançamento encontrado.")
         
         for cliente in projetos_com_fin:
-            # Filtrar dados apenas deste cliente
             subset = df_view[df_view["Cliente"] == cliente]
             
-            # Calcular totais para o cabeçalho do menu
-            total_pendente = subset[subset["Status"] == "Pendente"]["Valor"].sum()
-            total_pago = subset[subset["Status"] == "Pago"]["Valor"].sum()
+            # Verifica se tem alguma pendência para definir a cor do ícone
+            tem_pendencia = subset[subset["Status"] == "Pendente"].shape[0] > 0
+            icone = "🔴" if tem_pendencia else "✅"
             
-            # Ícone visual: Vermelho se deve, Verde se quitou tudo
-            icone = "🔴" if total_pendente > 0 else "✅"
-            
-            # --- O MENU SUSPENSO (EXPANDER) ---
-            with st.expander(f"{icone} {cliente} | Pendente: {format_currency_br(total_pendente)} (Pago: {format_currency_br(total_pago)})"):
+            # TÍTULO LIMPO: Apenas ícone e nome do cliente
+            with st.expander(f"{icone} {cliente}"):
                 
-                # Listar as parcelas dentro do expander
                 for idx, row in subset.iterrows():
                     with st.container(border=True):
                         c_desc, c_val, c_btn = st.columns([3, 2, 2])
                         
-                        # Coluna 1: Descrição e Datas
                         c_desc.markdown(f"**{row['Descricao']}**")
                         data_venc_fmt = format_date_br(row['Vencimento'])
                         
@@ -523,20 +521,13 @@ elif aba == "Controle Financeiro":
                         else:
                             c_desc.caption(f"Pago em: {format_date_br(row['Data_Pagamento'])}")
                         
-                        # Coluna 2: Valor
                         c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
                         
-                        # Coluna 3: Ação
                         if row['Status'] == 'Pendente':
-                            # Botão de Dar Baixa
                             if c_btn.button("Receber", key=f"rec_{row['ID_Lancamento']}"):
-                                # Busca o índice real no dataframe original pelo ID único
                                 real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
-                                
                                 df_financeiro.at[real_idx, "Status"] = "Pago"
                                 df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
-                                
-                                # Salva corrigindo datas
                                 df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
                                 save_data(df_financeiro, "Financeiro")
                                 st.balloons()
