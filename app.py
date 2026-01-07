@@ -199,56 +199,86 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar Arquivo", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (Agora com Inteligência Comercial)
+# ABA 2: DASHBOARD FINANCEIRO (COM FILTRO ANUAL INTELIGENTE - 2026)
 # ==============================================================================
 elif aba == "Dash Financeiro":
-    st.header("💰 Dashboard Financeiro e Comercial")
+    # 1. Detectar o ano atual automaticamente
+    ano_atual = datetime.now().year
+    
+    st.header(f"💰 Dashboard Financeiro ({ano_atual})")
     st.markdown("---")
     
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
+        # Preparação dos dados: Garante que Vencimento é Data
         df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
+        df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"])
+        df_fin_calc["Ano_Venc"] = df_fin_calc["Vencimento"].dt.year
         
-        total_previsto = df_financeiro["Valor"].sum()
-        recebido = df_financeiro[df_financeiro["Status"] == "Pago"]["Valor"].sum()
-        a_receber = df_financeiro[df_financeiro["Status"] == "Pendente"]["Valor"].sum()
+        # --- FILTRO 1: COMPETÊNCIA DO ANO ATUAL (Para métricas de desempenho) ---
+        # Só pega o que vence em 2026 (ou no ano que estiver)
+        df_ano_vigente = df_fin_calc[df_fin_calc["Ano_Venc"] == ano_atual]
         
+        # Cálculos do Ano
+        total_previsto_ano = df_ano_vigente["Valor"].sum()
+        recebido_ano = df_ano_vigente[df_ano_vigente["Status"] == "Pago"]["Valor"].sum()
+        a_receber_ano = df_ano_vigente[df_ano_vigente["Status"] == "Pendente"]["Valor"].sum()
+        
+        # --- FILTRO 2: COBRANÇA (OPÇÃO B - Acumulado Histórico) ---
+        # Pega TUDO que está pendente e vencido, independente do ano (2024, 2025, 2026...)
         hoje = pd.to_datetime(get_today_date())
-        atrasados = df_fin_calc[(df_fin_calc["Status"] == "Pendente") & (df_fin_calc["Vencimento"] < hoje)]
-        valor_atrasado = atrasados["Valor"].sum()
+        atrasados_total = df_fin_calc[
+            (df_fin_calc["Status"] == "Pendente") & 
+            (df_fin_calc["Vencimento"] < hoje)
+        ]
+        valor_atrasado_total = atrasados_total["Valor"].sum()
 
+        # KPIs
         f1, f2, f3, f4 = st.columns(4)
-        f1.metric("Total em Caixa", format_currency_br(recebido))
-        f2.metric("A Receber", format_currency_br(a_receber))
-        f3.metric("⚠️ Em Atraso", format_currency_br(valor_atrasado), delta_color="inverse")
+        f1.metric(f"Total em Caixa ({ano_atual})", format_currency_br(recebido_ano))
+        f2.metric(f"A Receber ({ano_atual})", format_currency_br(a_receber_ano))
         
-        # Métrica Extra: Preço Médio do m² (Considerando valor de contrato)
-        area_total = df_projetos["Area_m2"].sum()
-        contrato_total = df_projetos["Proposta_Aceita_R$"].sum()
-        preco_m2 = (contrato_total / area_total) if area_total > 0 else 0
-        f4.metric("Preço Médio/m²", format_currency_br(preco_m2))
+        # Atraso mostra o total geral (Dívida antiga + nova)
+        f3.metric("⚠️ Total em Atraso (Geral)", format_currency_br(valor_atrasado_total), delta_color="inverse")
+        
+        # Valor Hora (Baseado no faturamento deste ano e horas totais)
+        # Nota: Idealmente as horas deveriam ser filtradas por ano também, mas manteremos simples por enquanto
+        total_horas = df_tarefas["Horas_Gastas"].sum() 
+        vlr_hora = (total_previsto_ano / total_horas) if total_horas > 0 else 0
+        f4.metric(f"Valor Hora Médio ({ano_atual})", f"R$ {vlr_hora:.2f}/h")
 
         st.markdown("---")
         
-        # --- ANÁLISE COMERCIAL (USANDO TIPO E CIDADE) ---
-        st.subheader("📊 Inteligência Comercial")
+        # --- INTELIGÊNCIA COMERCIAL (Baseada apenas no Ano Atual) ---
+        st.subheader(f"📊 Inteligência Comercial ({ano_atual})")
+        
+        # Precisamos cruzar o financeiro deste ano com os dados do projeto (Tipo/Cidade)
+        # 1. Pegamos os lançamentos deste ano
+        df_analise = pd.merge(df_ano_vigente, df_projetos[["ID_Projeto", "Tipo", "Cidade"]], on="ID_Projeto", how="left")
+        
         c_tipo, c_cidade = st.columns(2)
         
         with c_tipo:
-            # Agrupar Valor de Contrato por Tipo
-            if not df_projetos.empty:
-                df_tipo = df_projetos.groupby("Tipo")["Proposta_Aceita_R$"].sum().reset_index()
-                fig_tipo = px.pie(df_tipo, values="Proposta_Aceita_R$", names="Tipo", title="Faturamento por Tipo de Obra", hole=0.4)
+            if not df_analise.empty:
+                # Soma os valores dos lançamentos por Tipo de Obra
+                df_tipo = df_analise.groupby("Tipo")["Valor"].sum().reset_index()
+                fig_tipo = px.pie(df_tipo, values="Valor", names="Tipo", 
+                                  title=f"Receita por Tipo de Obra em {ano_atual}", hole=0.4)
                 st.plotly_chart(fig_tipo, use_container_width=True)
+            else:
+                st.info(f"Sem dados de faturamento em {ano_atual}.")
                 
         with c_cidade:
-            # Agrupar Valor de Contrato por Cidade
-            if not df_projetos.empty:
-                df_cidade = df_projetos.groupby("Cidade")["Proposta_Aceita_R$"].sum().reset_index()
-                fig_cidade = px.bar(df_cidade, x="Cidade", y="Proposta_Aceita_R$", title="Faturamento por Cidade", text_auto=True)
-                fig_cidade.update_layout(yaxis_title="Valor Contratado (R$)")
+            if not df_analise.empty:
+                # Soma os valores dos lançamentos por Cidade
+                df_cidade = df_analise.groupby("Cidade")["Valor"].sum().reset_index()
+                fig_cidade = px.bar(df_cidade, x="Cidade", y="Valor", 
+                                    title=f"Receita por Cidade em {ano_atual}", text_auto=True)
+                fig_cidade.update_layout(yaxis_title="Valor (R$)")
                 st.plotly_chart(fig_cidade, use_container_width=True)
+            else:
+                st.info(f"Sem dados de faturamento em {ano_atual}.")
 
         st.markdown("---")
         
@@ -256,22 +286,28 @@ elif aba == "Dash Financeiro":
         fg1, fg2 = st.columns(2)
         
         with fg1:
-            st.subheader("📈 Fluxo de Entradas (Vencimento)")
-            if not df_fin_calc.empty:
-                df_fin_calc["Mes_Ano"] = df_fin_calc["Vencimento"].dt.strftime("%Y-%m")
-                fluxo = df_fin_calc.groupby("Mes_Ano")["Valor"].sum().reset_index()
-                fig_fluxo = px.bar(fluxo, x="Mes_Ano", y="Valor", text_auto=True)
+            st.subheader(f"📈 Fluxo de Caixa ({ano_atual})")
+            if not df_ano_vigente.empty:
+                df_ano_vigente["Mes"] = df_ano_vigente["Vencimento"].dt.strftime("%Y-%m")
+                fluxo = df_ano_vigente.groupby("Mes")["Valor"].sum().reset_index()
+                fig_fluxo = px.bar(fluxo, x="Mes", y="Valor", text_auto=True, title="Entradas Previstas/Realizadas")
                 st.plotly_chart(fig_fluxo, use_container_width=True)
+            else:
+                st.info(f"Nenhum lançamento para {ano_atual}.")
             
         with fg2:
-            st.subheader("🚨 Contas em Atraso")
-            if not atrasados.empty:
-                atrasados_view = pd.merge(atrasados, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+            st.subheader("🚨 Cobrança (Todas Pendências)")
+            if not atrasados_total.empty:
+                atrasados_view = pd.merge(atrasados_total, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+                
+                # Formatação visual
                 atrasados_view["Vencimento_Fmt"] = atrasados_view["Vencimento"].apply(lambda x: format_date_br(x))
                 atrasados_view["Valor_Fmt"] = atrasados_view["Valor"].apply(lambda x: format_currency_br(x))
-                st.dataframe(atrasados_view[["Cliente", "Descricao", "Vencimento_Fmt", "Valor_Fmt"]], hide_index=True, use_container_width=True)
+                
+                st.dataframe(atrasados_view[["Cliente", "Descricao", "Vencimento_Fmt", "Valor_Fmt"]], 
+                             hide_index=True, use_container_width=True)
             else:
-                st.success("Tudo em dia!")
+                st.success("Nenhuma conta atrasada! Parabéns.")
 
 # ==============================================================================
 # ABA 3: CADASTRO PROJETOS (VISUAL LIMPO E EDITÁVEL)
