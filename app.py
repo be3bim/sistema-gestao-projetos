@@ -116,13 +116,18 @@ else:
     df_tarefas["Data_Inicio"] = pd.to_datetime(df_tarefas["Data_Inicio"], errors="coerce")
     df_tarefas["Horas_Gastas"] = pd.to_numeric(df_tarefas["Horas_Gastas"], errors="coerce").fillna(0.0)
 
-# 3. Colunas FINANCEIRO (Entradas) - Adicionado Valor_Imposto
+# 3. Colunas FINANCEIRO (Entradas)
 cols_fin = ["ID_Lancamento", "ID_Projeto", "Descricao", "Valor", "Vencimento", "Status", "Data_Pagamento", "Valor_Imposto"]
 if df_financeiro.empty: df_financeiro = pd.DataFrame(columns=cols_fin)
 else:
+    # Garante que a coluna existe
     if "Valor_Imposto" not in df_financeiro.columns: df_financeiro["Valor_Imposto"] = 0.0
+    
+    # CONVERSÃO BLINDADA: Substitui vazios por 0.0 IMEDIATAMENTE
     df_financeiro["Valor"] = pd.to_numeric(df_financeiro["Valor"], errors="coerce").fillna(0.0)
     df_financeiro["Valor_Imposto"] = pd.to_numeric(df_financeiro["Valor_Imposto"], errors="coerce").fillna(0.0)
+    
+    # Tratamento de datas
     df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"], errors="coerce")
 
 # 4. Colunas DESPESAS (Saídas) - NOVO
@@ -437,7 +442,7 @@ elif aba == "Controle de Tarefas":
                             st.rerun()
 
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO (Com Cálculo Automático de Imposto 15.5%)
+# ABA 5: CONTROLE FINANCEIRO (CORRIGIDO ERRO API)
 # ==============================================================================
 elif aba == "Controle Financeiro":
     st.header("💰 Lançamentos e Baixas (Entradas)")
@@ -458,7 +463,6 @@ elif aba == "Controle Financeiro":
                 if proj_fin:
                     id_p = df_projetos[df_projetos["Cliente"] == proj_fin]["ID_Projeto"].values[0]
                     data_pg = str(venc_fin) if status_fin == "Pago" else ""
-                    # Se já nascer pago, calcula imposto
                     val_imposto = (valor_fin * 0.155) if status_fin == "Pago" else 0.0
                     
                     novo_fin = pd.DataFrame([{
@@ -467,8 +471,12 @@ elif aba == "Controle Financeiro":
                         "Vencimento": str(venc_fin), "Status": status_fin, 
                         "Data_Pagamento": data_pg, "Valor_Imposto": val_imposto
                     }])
+                    
                     df_final = pd.concat([df_financeiro, novo_fin], ignore_index=True)
+                    # Limpeza antes de salvar
                     df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
+                    df_final["Valor_Imposto"] = df_final["Valor_Imposto"].fillna(0.0) 
+                    
                     save_data(df_final, "Financeiro")
                     st.success("Registrado!")
                     st.rerun()
@@ -497,7 +505,7 @@ elif aba == "Controle Financeiro":
                             if c_btn.button("Receber (15.5% Imposto)", key=f"rec_{row['ID_Lancamento']}"):
                                 real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
                                 
-                                # LÓGICA DO IMPOSTO AUTOMÁTICO
+                                # Lógica
                                 valor_recebido = df_financeiro.at[real_idx, "Valor"]
                                 imposto_calculado = valor_recebido * 0.155
                                 
@@ -505,18 +513,23 @@ elif aba == "Controle Financeiro":
                                 df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
                                 df_financeiro.at[real_idx, "Valor_Imposto"] = imposto_calculado
                                 
+                                # --- CORREÇÃO CRÍTICA AQUI ---
+                                # 1. Garante formato de data String
                                 df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
+                                # 2. REMOVE NaNs (O motivo do erro)
+                                df_financeiro["Valor_Imposto"] = df_financeiro["Valor_Imposto"].fillna(0.0)
+                                df_financeiro["Valor"] = df_financeiro["Valor"].fillna(0.0)
+                                
                                 save_data(df_financeiro, "Financeiro")
                                 st.balloons()
                                 st.rerun()
                         else:
                             c_desc.caption(f"Pago: {format_date_br(row['Data_Pagamento'])}")
                             c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
-                            c_desc.caption(f"Imposto retido: {format_currency_br(row['Valor_Imposto'])}")
+                            c_desc.caption(f"Imposto retido: {format_currency_br(row.get('Valor_Imposto', 0.0))}")
                             c_btn.success("Pago")
     else:
         st.info("Nenhum lançamento.")
-
 # ==============================================================================
 # ABA 6: CONTROLE DESPESAS (CUSTOS FIXOS) - NOVO
 # ==============================================================================
