@@ -104,7 +104,7 @@ else:
     df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
     df_projetos["Area_m2"] = pd.to_numeric(df_projetos["Area_m2"], errors="coerce").fillna(0.0)
 
-# 2. Colunas TAREFAS (REMOVIDO Link_Tarefa)
+# 2. Colunas TAREFAS
 cols_task = ["ID_Projeto", "Fase", "Disciplina", "Descricao", "Responsavel", 
              "Data_Inicio", "Data_Deadline", "Prioridade", "Status", 
              "Historico_Log", "Data_Conclusao", "Horas_Gastas"]
@@ -203,7 +203,7 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (COM ANÁLISE DE HORAS/EFICIÊNCIA)
+# ABA 2: DASHBOARD FINANCEIRO (COMPLETO V6)
 # ==============================================================================
 elif aba == "Dash Financeiro":
     ano_atual = datetime.now().year
@@ -213,12 +213,12 @@ elif aba == "Dash Financeiro":
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
-        # --- PREPARAÇÃO DOS DADOS (Bloco padrão mantido) ---
+        # --- PREPARAÇÃO DOS DADOS ---
         df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
         df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"], errors="coerce")
         df_fin_calc["Data_Pagamento"] = pd.to_datetime(df_fin_calc["Data_Pagamento"], errors="coerce")
         
-        # Data Híbrida
+        # Data Híbrida (Caixa vs Competência)
         df_fin_calc["Data_Considerada"] = df_fin_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
@@ -226,7 +226,7 @@ elif aba == "Dash Financeiro":
         df_fin_calc["Data_Considerada"] = pd.to_datetime(df_fin_calc["Data_Considerada"], errors="coerce")
         df_fin_calc["Ano_Ref"] = df_fin_calc["Data_Considerada"].dt.year
         
-        # Despesas
+        # Despesas (Saídas)
         df_desp_calc = df_despesas.dropna(subset=["Vencimento"]).copy()
         df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"], errors="coerce")
         df_desp_calc["Data_Pagamento"] = pd.to_datetime(df_desp_calc["Data_Pagamento"], errors="coerce")
@@ -257,7 +257,7 @@ elif aba == "Dash Financeiro":
         c2.metric("Impostos (15.5%)", format_currency_br(impostos_pagos), delta="- Gov", delta_color="inverse")
         c3.metric("Custos Fixos", format_currency_br(custos_fixos_pagos), delta="- Desp", delta_color="inverse")
         c4.metric("Lucro Líquido Real", format_currency_br(lucro_liquido), delta=f"{margem_lucro:.1f}%")
-        c5.metric("Previsão Futura", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar")
+        c5.metric("Previsão Futura", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar (Deste ano)")
 
         st.markdown("---")
         
@@ -330,46 +330,35 @@ elif aba == "Dash Financeiro":
                         st.plotly_chart(fig_tipo, use_container_width=True)
 
             # =========================================================
-            # SEÇÃO 2: EFICIÊNCIA E HORAS (AQUI ESTÁ A NOVIDADE)
+            # SEÇÃO 2: EFICIÊNCIA E HORAS
             # =========================================================
             st.markdown("---")
             st.subheader("⏱️ Eficiência e Lucratividade Real (Horas Gastas)")
             
-            # 1. Agrupar horas gastas por projeto (Tabela Tarefas)
             horas_por_proj = df_tarefas.groupby("ID_Projeto")["Horas_Gastas"].sum().reset_index()
-            
-            # 2. Pegar valor de contrato (Tabela Projetos) - Pegamos apenas projetos ATIVOS ou CONCLUÍDOS RECENTES
             proj_financeiro = df_projetos[["ID_Projeto", "Cliente", "Proposta_Aceita_R$"]].copy()
-            
-            # 3. Cruzar os dados
             df_eficiencia = pd.merge(proj_financeiro, horas_por_proj, on="ID_Projeto", how="inner")
             
-            # 4. Calcular Valor por Hora (R$/h)
-            # Evita divisão por zero
             df_eficiencia = df_eficiencia[df_eficiencia["Horas_Gastas"] > 0] 
             df_eficiencia["Valor_Hora_Real"] = df_eficiencia["Proposta_Aceita_R$"] / df_eficiencia["Horas_Gastas"]
             
             if not df_eficiencia.empty:
-                # Ordenar: Quem paga melhor primeiro
                 df_eficiencia = df_eficiencia.sort_values(by="Valor_Hora_Real", ascending=True)
                 
                 c_efic1, c_efic2 = st.columns([2, 1])
-                
                 with c_efic1:
-                    st.markdown("**🏆 Ranking: Valor Real da Hora Trabalhada (R$/h)**")
-                    st.caption("Quanto cada cliente está pagando efetivamente pelo seu tempo.")
+                    st.markdown("**🏆 Ranking: Valor Real da Hora (R$/h)**")
                     fig_hour = px.bar(df_eficiencia, x="Valor_Hora_Real", y="Cliente", orientation='h', text_auto=".2f",
                                       color="Valor_Hora_Real", color_continuous_scale="RdYlGn")
                     fig_hour.update_layout(xaxis_title="Valor por Hora (R$)", yaxis_title="")
                     st.plotly_chart(fig_hour, use_container_width=True)
                     
                 with c_efic2:
-                    st.markdown("**📉 Total de Horas Consumidas**")
-                    st.caption("Onde a equipe gastou mais tempo.")
+                    st.markdown("**📉 Horas Totais**")
                     fig_pizza_h = px.pie(df_eficiencia, values="Horas_Gastas", names="Cliente", hole=0.4)
                     st.plotly_chart(fig_pizza_h, use_container_width=True)
             else:
-                st.info("Nenhuma hora registrada nos projetos ainda. Preencha o 'Timesheet' na aba Tarefas.")
+                st.info("Nenhuma hora registrada.")
 
 # ==============================================================================
 # ABA 3: CADASTRO PROJETOS
@@ -446,11 +435,13 @@ elif aba == "Cadastro Projetos":
                             st.rerun()
 
 # ==============================================================================
-# ABA 4: CONTROLE DE TAREFAS (ATUALIZADA SEM CAMPO DE LINK)
+# ABA 4: CONTROLE DE TAREFAS (COM FILTRO DE PROJETOS ATIVOS)
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Atividades e Timesheet")
-    lista_projetos = df_projetos["Cliente"].unique().tolist()
+    
+    # MUDANÇA: Filtra apenas projetos com Status "Ativo" para o formulário
+    lista_projetos = df_projetos[df_projetos["Status_Geral"] == "Ativo"]["Cliente"].unique().tolist()
     
     with st.expander("➕ Nova Tarefa", expanded=False):
         with st.form("task_form", clear_on_submit=True):
@@ -533,11 +524,13 @@ elif aba == "Controle de Tarefas":
                             st.rerun()
 
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO
+# ABA 5: CONTROLE FINANCEIRO (COM FILTRO DE PROJETOS ATIVOS)
 # ==============================================================================
 elif aba == "Controle Financeiro":
     st.header("💰 Lançamentos e Baixas (Entradas)")
-    lista_projetos = df_projetos["Cliente"].unique().tolist()
+    
+    # MUDANÇA: Filtra apenas projetos com Status "Ativo" para novos lançamentos
+    lista_projetos = df_projetos[df_projetos["Status_Geral"] == "Ativo"]["Cliente"].unique().tolist()
     
     with st.expander("➕ Novo Lançamento (Receita)", expanded=True):
         with st.form("fin_form", clear_on_submit=True):
@@ -573,6 +566,8 @@ elif aba == "Controle Financeiro":
     if not df_financeiro.empty:
         st.subheader("Extrato por Projeto")
         df_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+        
+        # AQUI MANTEMOS TODOS PARA VER O HISTÓRICO (Mesmo de concluídos)
         projetos_com_fin = df_view["Cliente"].unique()
         
         for cliente in projetos_com_fin:
