@@ -208,7 +208,7 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (Agora com Lucro Líquido e Custos)
+# ABA 2: DASHBOARD FINANCEIRO (REGIME DE CAIXA HÍBRIDO)
 # ==============================================================================
 elif aba == "Dash Financeiro":
     ano_atual = datetime.now().year
@@ -218,43 +218,65 @@ elif aba == "Dash Financeiro":
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
-        # Preparação
-        df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
-        df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"])
-        df_fin_calc["Ano_Venc"] = df_fin_calc["Vencimento"].dt.year
+        # --- PREPARAÇÃO DOS DADOS (RECEITAS) ---
+        df_fin_calc = df_financeiro.copy()
         
-        df_desp_calc = df_despesas.dropna(subset=["Vencimento"]).copy()
-        df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"])
-        df_desp_calc["Ano_Venc"] = df_desp_calc["Vencimento"].dt.year
+        # Converte datas para datetime
+        df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"], errors="coerce")
+        df_fin_calc["Data_Pagamento"] = pd.to_datetime(df_fin_calc["Data_Pagamento"], errors="coerce")
+        
+        # >>> A MÁGICA DO REGIME DE CAIXA <<<
+        # Cria uma coluna "Data_Considerada":
+        # Se estiver PAGO, usa a Data do Pagamento.
+        # Se estiver PENDENTE, usa a Data do Vencimento.
+        df_fin_calc["Data_Considerada"] = df_fin_calc.apply(
+            lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
+            axis=1
+        )
+        
+        # Extrai o ano dessa data "real"
+        df_fin_calc["Ano_Ref"] = df_fin_calc["Data_Considerada"].dt.year
+        
+        # --- PREPARAÇÃO DOS DADOS (DESPESAS) ---
+        df_desp_calc = df_despesas.copy()
+        df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"], errors="coerce")
+        df_desp_calc["Data_Pagamento"] = pd.to_datetime(df_desp_calc["Data_Pagamento"], errors="coerce")
+        
+        # Mesma lógica para despesas
+        df_desp_calc["Data_Considerada"] = df_desp_calc.apply(
+            lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
+            axis=1
+        )
+        df_desp_calc["Ano_Ref"] = df_desp_calc["Data_Considerada"].dt.year
 
-        # --- FILTRO ANO ATUAL ---
-        entradas_ano = df_fin_calc[df_fin_calc["Ano_Venc"] == ano_atual]
-        saidas_ano = df_desp_calc[df_desp_calc["Ano_Venc"] == ano_atual]
+        # --- FILTRAR APENAS O QUE ACONTECEU (OU VAI ACONTECER) NESTE ANO ---
+        entradas_ano = df_fin_calc[df_fin_calc["Ano_Ref"] == ano_atual]
+        saidas_ano = df_desp_calc[df_desp_calc["Ano_Ref"] == ano_atual]
         
-        # 1. RECEITA BRUTA (Tudo que recebeu)
+        # 1. RECEITA BRUTA (Efetivamente recebida este ano)
         receita_bruta = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor"].sum()
         
-        # 2. IMPOSTOS (Os 15,5% retidos automaticamente ao receber)
+        # 2. IMPOSTOS (Pagos este ano)
         impostos_pagos = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor_Imposto"].sum()
         
-        # 3. CUSTOS FIXOS (Contador, etc que foi pago)
+        # 3. CUSTOS FIXOS (Pagos este ano)
         custos_fixos_pagos = saidas_ano[saidas_ano["Status"] == "Pago"]["Valor"].sum()
         
-        # 4. LUCRO LÍQUIDO (O que sobrou)
+        # 4. LUCRO LÍQUIDO
         lucro_liquido = receita_bruta - impostos_pagos - custos_fixos_pagos
         margem_lucro = (lucro_liquido / receita_bruta * 100) if receita_bruta > 0 else 0
         
-        # 5. PREVISÃO (A Receber e A Pagar)
+        # 5. PREVISÃO (O que ainda está por vir neste ano pelo vencimento)
         a_receber = entradas_ano[entradas_ano["Status"] == "Pendente"]["Valor"].sum()
         a_pagar = saidas_ano[saidas_ano["Status"] == "Pendente"]["Valor"].sum()
 
         # --- EXIBIÇÃO KPIs ---
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Receita Bruta", format_currency_br(receita_bruta))
+        c1.metric("Receita Bruta (Caixa)", format_currency_br(receita_bruta))
         c2.metric("Impostos (15.5%)", format_currency_br(impostos_pagos), delta="- Gov", delta_color="inverse")
         c3.metric("Custos Fixos", format_currency_br(custos_fixos_pagos), delta="- Desp", delta_color="inverse")
         c4.metric("Lucro Líquido Real", format_currency_br(lucro_liquido), delta=f"{margem_lucro:.1f}%")
-        c5.metric("Previsão Caixa", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar")
+        c5.metric("Previsão Futura", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar (Deste ano)")
 
         st.markdown("---")
         
@@ -262,7 +284,6 @@ elif aba == "Dash Financeiro":
         g1, g2 = st.columns(2)
         with g1:
             st.subheader(f"📊 Composição Financeira ({ano_atual})")
-            # Gráfico de Cascata (Waterfall) simulado com barras
             dados_fin = pd.DataFrame({
                 "Categoria": ["Receita Bruta", "Impostos", "Custos Fixos", "Lucro Líquido"],
                 "Valor": [receita_bruta, -impostos_pagos, -custos_fixos_pagos, lucro_liquido]
@@ -272,27 +293,33 @@ elif aba == "Dash Financeiro":
             st.plotly_chart(fig_fin, use_container_width=True)
             
         with g2:
-            st.subheader(f"📈 Fluxo Mensal ({ano_atual})")
-            # Agrupa Entradas
-            entradas_ano["Mes"] = entradas_ano["Vencimento"].dt.strftime("%Y-%m")
-            fluxo_ent = entradas_ano.groupby("Mes")["Valor"].sum().reset_index()
-            fluxo_ent["Tipo"] = "Entrada"
+            st.subheader(f"📈 Fluxo Mensal Real ({ano_atual})")
             
-            # Agrupa Saídas (Impostos + Custos)
-            # Para simplificar o gráfico, vamos somar despesas pagas por mês
-            saidas_ano["Mes"] = saidas_ano["Vencimento"].dt.strftime("%Y-%m")
-            fluxo_sai = saidas_ano.groupby("Mes")["Valor"].sum().reset_index()
-            fluxo_sai["Tipo"] = "Saída"
+            # Agrupa usando a DATA CONSIDERADA (Data Real)
+            if not entradas_ano.empty:
+                entradas_ano["Mes"] = entradas_ano["Data_Considerada"].dt.strftime("%Y-%m")
+                fluxo_ent = entradas_ano.groupby("Mes")["Valor"].sum().reset_index()
+                fluxo_ent["Tipo"] = "Entrada"
+            else:
+                fluxo_ent = pd.DataFrame()
+            
+            if not saidas_ano.empty:
+                saidas_ano["Mes"] = saidas_ano["Data_Considerada"].dt.strftime("%Y-%m")
+                fluxo_sai = saidas_ano.groupby("Mes")["Valor"].sum().reset_index()
+                fluxo_sai["Tipo"] = "Saída"
+            else:
+                fluxo_sai = pd.DataFrame()
             
             df_fluxo = pd.concat([fluxo_ent, fluxo_sai])
             
             if not df_fluxo.empty:
+                # Ordenar cronologicamente
+                df_fluxo = df_fluxo.sort_values("Mes")
                 fig_fluxo = px.bar(df_fluxo, x="Mes", y="Valor", color="Tipo", barmode="group",
                                    color_discrete_map={"Entrada": "#27AE60", "Saída": "#E74C3C"})
                 st.plotly_chart(fig_fluxo, use_container_width=True)
             else:
-                st.info("Sem dados mensais.")
-
+                st.info("Sem movimentações neste ano.")
 # ==============================================================================
 # ABA 3: CADASTRO PROJETOS
 # ==============================================================================
