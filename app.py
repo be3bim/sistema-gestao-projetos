@@ -53,12 +53,15 @@ else:
     if "Cidade" not in df_projetos.columns:
         df_projetos["Cidade"] = ""
 
-# Garantir colunas Tarefas
+# Garantir colunas Tarefas (Adicionei Data_Conclusao)
 cols_task = ["ID_Projeto", "Fase", "Disciplina", "Descricao", "Responsavel", 
-             "Data_Inicio", "Data_Deadline", "Prioridade", "Status", "Link_Tarefa", "Historico_Log"]
+             "Data_Inicio", "Data_Deadline", "Prioridade", "Status", 
+             "Link_Tarefa", "Historico_Log", "Data_Conclusao"] # <--- NOVO
+
 if df_tarefas.empty: df_tarefas = pd.DataFrame(columns=cols_task)
 else:
     if "Historico_Log" not in df_tarefas.columns: df_tarefas["Historico_Log"] = ""
+    if "Data_Conclusao" not in df_tarefas.columns: df_tarefas["Data_Conclusao"] = ""
 
 # Tratamento de Tipos para Gráficos
 if not df_projetos.empty:
@@ -364,13 +367,14 @@ elif aba == "Cadastro Projetos":
             st.error(f"Erro técnico na tabela: {e}")
 
 # ==============================================================================
-# ABA 3: CONTROLE DE TAREFAS (MANUTENÇÃO DO ANTERIOR)
+# ABA 3: CONTROLE DE TAREFAS (COM DATA DE CONCLUSÃO E LISTA DE FEITOS)
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Quadro de Atividades")
     
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
+    # --- FORMULÁRIO DE CADASTRO ---
     with st.expander("➕ Cadastrar Nova Tarefa"):
         with st.form("task_form", clear_on_submit=True):
             proj = st.selectbox("Projeto", lista_projetos)
@@ -397,7 +401,8 @@ elif aba == "Controle de Tarefas":
                     "Prioridade": prio,
                     "Status": "A Fazer",
                     "Link_Tarefa": link_t,
-                    "Historico_Log": f"Criado em {get_now_br()}"
+                    "Historico_Log": f"Criado em {get_now_br()}",
+                    "Data_Conclusao": "" # Nasce vazio
                 }])
                 save_data(pd.concat([df_tarefas, nova], ignore_index=True), "Tarefas")
                 st.success("Tarefa criada!")
@@ -413,12 +418,13 @@ elif aba == "Controle de Tarefas":
         responsaveis_filtro = st.multiselect("Filtrar Responsável", ["GABRIEL", "MILENNA"], default=["GABRIEL", "MILENNA"])
         df_full = df_full[df_full["Responsavel"].isin(responsaveis_filtro)]
 
+        # --- TAREFAS PENDENTES (Loop por Prioridade) ---
         ordem_prioridade = ["Alta", "Média", "Baixa"]
         cores = {"Alta": "🔴", "Média": "🟡", "Baixa": "🟢"}
 
         for prioridade_atual in ordem_prioridade:
-            subset = df_full[df_full["Prioridade"] == prioridade_atual]
-            subset = subset[subset["Status"] != "Concluído"]
+            # Filtra por prioridade E que NÃO esteja concluído
+            subset = df_full[(df_full["Prioridade"] == prioridade_atual) & (df_full["Status"] != "Concluído")]
 
             if not subset.empty:
                 st.markdown(f"### {cores[prioridade_atual]} Prioridade {prioridade_atual}")
@@ -441,18 +447,59 @@ elif aba == "Controle de Tarefas":
                         mudou = False
                         log_msg = ""
                         
-                        # Detecta mudanças
+                        # --- LÓGICA DE MUDANÇA ---
                         if nova_prio != row['Prioridade']:
                             df_tarefas.at[idx, "Prioridade"] = nova_prio
                             log_msg += f"[{get_now_br()}] Prio: {row['Prioridade']}->{nova_prio}. "
                             mudou = True
+                        
                         if novo_status != row['Status']:
                             df_tarefas.at[idx, "Status"] = novo_status
                             log_msg += f"[{get_now_br()}] Status: {row['Status']}->{novo_status}. "
+                            
+                            # >>> Lógica da Data de Conclusão <<<
+                            if novo_status == "Concluído":
+                                df_tarefas.at[idx, "Data_Conclusao"] = get_now_br() # Grava data de hoje
+                            else:
+                                df_tarefas.at[idx, "Data_Conclusao"] = "" # Limpa se reabriu a tarefa
+                            
                             mudou = True
 
                         if mudou:
                             hist_atual = str(df_tarefas.at[idx, "Historico_Log"]) if pd.notna(df_tarefas.at[idx, "Historico_Log"]) else ""
                             df_tarefas.at[idx, "Historico_Log"] = hist_atual + " | " + log_msg
+                            save_data(df_tarefas, "Tarefas")
+                            st.rerun()
+
+        # --- SEÇÃO DE TAREFAS CONCLUÍDAS ---
+        st.markdown("---")
+        with st.expander("✅ Ver Tarefas Concluídas / Entregues"):
+            concluidas = df_full[df_full["Status"] == "Concluído"]
+            
+            if concluidas.empty:
+                st.info("Nenhuma tarefa concluída ainda.")
+            else:
+                for idx, row in concluidas.iterrows():
+                    # Visualização diferente (mais compacta e cinza) para indicar finalizado
+                    with st.container(border=True):
+                        col_a, col_b, col_c = st.columns([4, 3, 2])
+                        
+                        col_a.markdown(f"~~**{row['Cliente']}** - {row['Descricao']}~~") # Risco no texto
+                        col_a.caption(f"Resp: {row['Responsavel']} | Fase: {row['Fase']}")
+                        
+                        # Mostra quando foi concluído
+                        data_fim = row.get('Data_Conclusao', '')
+                        if pd.isna(data_fim) or data_fim == "":
+                            msg_data = "Data não registrada"
+                        else:
+                            msg_data = f"Entregue em: {data_fim}"
+                            
+                        col_b.success(msg_data)
+                        
+                        # Opção de reabrir
+                        if col_c.button("Reabrir Tarefa", key=f"reabrir_{idx}"):
+                            df_tarefas.at[idx, "Status"] = "Em Andamento"
+                            df_tarefas.at[idx, "Data_Conclusao"] = "" # Limpa a data
+                            df_tarefas.at[idx, "Historico_Log"] += f" | [{get_now_br()}] Reaberto manualmente."
                             save_data(df_tarefas, "Tarefas")
                             st.rerun()
