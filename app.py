@@ -443,21 +443,26 @@ elif aba == "Controle de Tarefas":
                             st.rerun()
 
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO
+# ABA 5: CONTROLE FINANCEIRO (AGRUPADO POR PROJETO)
 # ==============================================================================
 elif aba == "Controle Financeiro":
-    st.header("💰 Lançamentos")
+    st.header("💰 Lançamentos e Baixas")
+    
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
-    with st.expander("➕ Novo Lançamento", expanded=True):
+    # --- FORMULÁRIO DE LANÇAMENTO ---
+    with st.expander("➕ Novo Lançamento (Clique para abrir)", expanded=True):
         with st.form("fin_form", clear_on_submit=True):
-            proj_fin = st.selectbox("Projeto", lista_projetos)
-            desc_fin = st.text_input("Descrição (Ex: Entrada)")
-            valor_fin = st.number_input("Valor (R$)", min_value=0.0, step=100.0)
-            venc_fin = st.date_input("Vencimento")
-            status_fin = st.selectbox("Status", ["Pendente", "Pago"])
+            c1, c2, c3 = st.columns([2, 2, 1])
+            proj_fin = c1.selectbox("Projeto", lista_projetos)
+            desc_fin = c2.text_input("Descrição (Ex: Entrada 30%)")
+            valor_fin = c3.number_input("Valor (R$)", min_value=0.0, step=100.0)
             
-            if st.form_submit_button("Lançar"):
+            c4, c5 = st.columns(2)
+            venc_fin = c4.date_input("Vencimento")
+            status_fin = c5.selectbox("Status Inicial", ["Pendente", "Pago"])
+            
+            if st.form_submit_button("Registrar Lançamento"):
                 if proj_fin:
                     id_p = df_projetos[df_projetos["Cliente"] == proj_fin]["ID_Projeto"].values[0]
                     data_pg = str(venc_fin) if status_fin == "Pago" else ""
@@ -469,30 +474,74 @@ elif aba == "Controle Financeiro":
                     }])
                     
                     df_final = pd.concat([df_financeiro, novo_fin], ignore_index=True)
+                    # Força conversão de data para string segura
                     df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
                     save_data(df_final, "Financeiro")
-                    st.success("Registrado!")
+                    st.success("Lançamento registrado!")
                     st.rerun()
     
     st.divider()
+    
+    # --- EXTRATO AGRUPADO POR PROJETO ---
     if not df_financeiro.empty:
-        df_fin_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
-        st.subheader("Extrato")
-        for idx, row in df_fin_view.iterrows():
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 2, 2])
-                c1.markdown(f"**{row['Cliente']}** - {row['Descricao']}")
-                c2.markdown(f"**{format_currency_br(row['Valor'])}** | {format_date_br(row['Vencimento'])}")
+        st.subheader("Extrato por Projeto")
+        
+        # Preparar dados: Junta com tabela de projetos para pegar o nome do Cliente
+        df_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+        
+        # Pegar lista de projetos que têm lançamentos
+        projetos_com_fin = df_view["Cliente"].unique()
+        
+        if len(projetos_com_fin) == 0:
+            st.info("Nenhum lançamento encontrado.")
+        
+        for cliente in projetos_com_fin:
+            # Filtrar dados apenas deste cliente
+            subset = df_view[df_view["Cliente"] == cliente]
+            
+            # Calcular totais para o cabeçalho do menu
+            total_pendente = subset[subset["Status"] == "Pendente"]["Valor"].sum()
+            total_pago = subset[subset["Status"] == "Pago"]["Valor"].sum()
+            
+            # Ícone visual: Vermelho se deve, Verde se quitou tudo
+            icone = "🔴" if total_pendente > 0 else "✅"
+            
+            # --- O MENU SUSPENSO (EXPANDER) ---
+            with st.expander(f"{icone} {cliente} | Pendente: {format_currency_br(total_pendente)} (Pago: {format_currency_br(total_pago)})"):
                 
-                if row['Status'] == 'Pendente':
-                    if c3.button("Receber (Baixar)", key=f"bx_{idx}"):
-                        real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
-                        df_financeiro.at[real_idx, "Status"] = "Pago"
-                        df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
+                # Listar as parcelas dentro do expander
+                for idx, row in subset.iterrows():
+                    with st.container(border=True):
+                        c_desc, c_val, c_btn = st.columns([3, 2, 2])
                         
-                        df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
-                        save_data(df_financeiro, "Financeiro")
-                        st.balloons()
-                        st.rerun()
-                else:
-                    c3.success(f"Pago em: {format_date_br(row['Data_Pagamento'])}")
+                        # Coluna 1: Descrição e Datas
+                        c_desc.markdown(f"**{row['Descricao']}**")
+                        data_venc_fmt = format_date_br(row['Vencimento'])
+                        
+                        if row['Status'] == 'Pendente':
+                            c_desc.caption(f"Vence em: {data_venc_fmt}")
+                        else:
+                            c_desc.caption(f"Pago em: {format_date_br(row['Data_Pagamento'])}")
+                        
+                        # Coluna 2: Valor
+                        c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
+                        
+                        # Coluna 3: Ação
+                        if row['Status'] == 'Pendente':
+                            # Botão de Dar Baixa
+                            if c_btn.button("Receber", key=f"rec_{row['ID_Lancamento']}"):
+                                # Busca o índice real no dataframe original pelo ID único
+                                real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
+                                
+                                df_financeiro.at[real_idx, "Status"] = "Pago"
+                                df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
+                                
+                                # Salva corrigindo datas
+                                df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
+                                save_data(df_financeiro, "Financeiro")
+                                st.balloons()
+                                st.rerun()
+                        else:
+                            c_btn.success("Pago")
+    else:
+        st.info("Nenhum lançamento financeiro registrado ainda.")
