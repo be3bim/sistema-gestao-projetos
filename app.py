@@ -301,20 +301,30 @@ elif aba == "Dash Financeiro":
         st.markdown("---")
 
         # =========================================================
-        # SEÇÃO 1: INTELIGÊNCIA COMERCIAL
+        # SEÇÃO 1: INTELIGÊNCIA COMERCIAL (CORRIGIDA)
         # =========================================================
         st.subheader(f"🧠 Inteligência Comercial ({ano_atual})")
         
-        df_analise = pd.merge(entradas_ano, df_projetos[["ID_Projeto", "Cliente", "Origem", "Tipo", "Cidade", "Area_m2"]], 
-                              on="ID_Projeto", how="left")
+        # IMPORTANTE: Usamos 'entradas_ano' que já contém apenas o que é de 2026
+        # seja por Data de Pagamento (Caixa) ou Vencimento (Previsão)
         
-        if df_analise.empty:
-            st.info("Sem dados comerciais.")
+        if entradas_ano.empty:
+            st.info("Não há movimentações (pagas ou pendentes) para 2026.")
         else:
+            # Cruzamento rigoroso: apenas os IDs que passaram no filtro de 2026
+            df_analise = pd.merge(
+                entradas_ano, 
+                df_projetos[["ID_Projeto", "Cliente", "Origem", "Tipo", "Cidade", "Area_m2"]], 
+                on="ID_Projeto", 
+                how="left"
+            )
+            
             col_i1, col_i2 = st.columns(2)
+            
             with col_i1:
-                st.markdown("**💰 Receita por Origem**")
+                st.markdown("**💰 Receita Prevista/Realizada por Origem**")
                 if "Origem" in df_analise.columns:
+                    # Agrupa o valor das parcelas de 2026 por Origem
                     df_origem = df_analise.groupby("Origem")["Valor"].sum().reset_index()
                     if not df_origem.empty:
                         fig_origem = px.pie(df_origem, values="Valor", names="Origem", hole=0.4,
@@ -322,11 +332,15 @@ elif aba == "Dash Financeiro":
                         st.plotly_chart(fig_origem, use_container_width=True)
 
             with col_i2:
-                st.markdown("**🏗️ Receita por Tipo**")
+                st.markdown("**🏗️ Receita Prevista/Realizada por Tipo**")
                 if "Tipo" in df_analise.columns:
+                    # Agrupa o valor das parcelas de 2026 por Tipo
                     df_tipo = df_analise.groupby("Tipo")["Valor"].sum().reset_index()
                     if not df_tipo.empty:
-                        fig_tipo = px.bar(df_tipo, x="Valor", y="Tipo", orientation='h', text_auto=True)
+                        # Ordenar para o gráfico ficar mais organizado
+                        df_tipo = df_tipo.sort_values(by="Valor", ascending=True)
+                        fig_tipo = px.bar(df_tipo, x="Valor", y="Tipo", orientation='h', text_auto=True,
+                                          title=f"Distribuição de Receita {ano_atual}")
                         st.plotly_chart(fig_tipo, use_container_width=True)
 
             # =========================================================
