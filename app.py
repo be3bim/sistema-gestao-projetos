@@ -208,7 +208,7 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (REGIME DE CAIXA HÍBRIDO)
+# ABA 2: DASHBOARD FINANCEIRO (CORREÇÃO DE TIPO DE DATA)
 # ==============================================================================
 elif aba == "Dash Financeiro":
     ano_atual = datetime.now().year
@@ -221,20 +221,18 @@ elif aba == "Dash Financeiro":
         # --- PREPARAÇÃO DOS DADOS (RECEITAS) ---
         df_fin_calc = df_financeiro.copy()
         
-        # Converte datas para datetime
+        # Converte datas originais
         df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"], errors="coerce")
         df_fin_calc["Data_Pagamento"] = pd.to_datetime(df_fin_calc["Data_Pagamento"], errors="coerce")
         
-        # >>> A MÁGICA DO REGIME DE CAIXA <<<
-        # Cria uma coluna "Data_Considerada":
-        # Se estiver PAGO, usa a Data do Pagamento.
-        # Se estiver PENDENTE, usa a Data do Vencimento.
+        # Cria a Data Híbrida (Caixa vs Competência)
         df_fin_calc["Data_Considerada"] = df_fin_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
         )
         
-        # Extrai o ano dessa data "real"
+        # CORREÇÃO CRÍTICA 1: Força a coluna nova a ser DATA antes de extrair o ano
+        df_fin_calc["Data_Considerada"] = pd.to_datetime(df_fin_calc["Data_Considerada"], errors="coerce")
         df_fin_calc["Ano_Ref"] = df_fin_calc["Data_Considerada"].dt.year
         
         # --- PREPARAÇÃO DOS DADOS (DESPESAS) ---
@@ -242,31 +240,34 @@ elif aba == "Dash Financeiro":
         df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"], errors="coerce")
         df_desp_calc["Data_Pagamento"] = pd.to_datetime(df_desp_calc["Data_Pagamento"], errors="coerce")
         
-        # Mesma lógica para despesas
+        # Cria a Data Híbrida para despesas
         df_desp_calc["Data_Considerada"] = df_desp_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
         )
+
+        # CORREÇÃO CRÍTICA 2: Força a coluna nova a ser DATA antes de extrair o ano
+        df_desp_calc["Data_Considerada"] = pd.to_datetime(df_desp_calc["Data_Considerada"], errors="coerce")
         df_desp_calc["Ano_Ref"] = df_desp_calc["Data_Considerada"].dt.year
 
         # --- FILTRAR APENAS O QUE ACONTECEU (OU VAI ACONTECER) NESTE ANO ---
         entradas_ano = df_fin_calc[df_fin_calc["Ano_Ref"] == ano_atual]
         saidas_ano = df_desp_calc[df_desp_calc["Ano_Ref"] == ano_atual]
         
-        # 1. RECEITA BRUTA (Efetivamente recebida este ano)
+        # 1. RECEITA BRUTA
         receita_bruta = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor"].sum()
         
-        # 2. IMPOSTOS (Pagos este ano)
+        # 2. IMPOSTOS
         impostos_pagos = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor_Imposto"].sum()
         
-        # 3. CUSTOS FIXOS (Pagos este ano)
+        # 3. CUSTOS FIXOS
         custos_fixos_pagos = saidas_ano[saidas_ano["Status"] == "Pago"]["Valor"].sum()
         
         # 4. LUCRO LÍQUIDO
         lucro_liquido = receita_bruta - impostos_pagos - custos_fixos_pagos
         margem_lucro = (lucro_liquido / receita_bruta * 100) if receita_bruta > 0 else 0
         
-        # 5. PREVISÃO (O que ainda está por vir neste ano pelo vencimento)
+        # 5. PREVISÃO
         a_receber = entradas_ano[entradas_ano["Status"] == "Pendente"]["Valor"].sum()
         a_pagar = saidas_ano[saidas_ano["Status"] == "Pendente"]["Valor"].sum()
 
