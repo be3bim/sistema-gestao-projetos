@@ -19,7 +19,7 @@ def format_currency_br(value):
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_date_br(date_obj):
-    if pd.isnull(date_obj): return ""
+    if pd.isnull(date_obj) or str(date_obj) == "NaT": return ""
     try:
         return pd.to_datetime(date_obj).strftime("%d/%m/%Y")
     except:
@@ -49,7 +49,7 @@ def gerar_pdf_status(projeto_dados, tarefas_proj):
     pdf.add_page()
     pdf.set_font("Arial", size=12)
     
-    # Cabeçalho do Projeto
+    # Cabeçalho
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(0, 10, f"Cliente: {projeto_dados['Cliente']}", ln=True, fill=True)
     pdf.set_font("Arial", size=10)
@@ -57,24 +57,21 @@ def gerar_pdf_status(projeto_dados, tarefas_proj):
     pdf.cell(0, 8, f"Status Atual: {projeto_dados['Status_Geral']}", ln=True)
     pdf.ln(5)
     
-    # Tabela de Tarefas
+    # Tarefas
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 10, "Status das Atividades Recentes:", ln=True)
     pdf.set_font("Arial", size=10)
     
     if not tarefas_proj.empty:
-        # Ordenar por status (A Fazer primeiro)
         tarefas_proj = tarefas_proj.sort_values(by="Status")
         for _, row in tarefas_proj.iterrows():
             status_clean = row['Status']
-            # Ícone visual simples com texto
             marcador = "[OK]" if status_clean == 'Concluído' else "[..]"
-            
             pdf.cell(15, 8, marcador, 0, 0)
             pdf.cell(120, 8, f"{row['Descricao']} ({row['Fase']})", 0, 0)
             pdf.cell(0, 8, f"{status_clean}", 0, 1)
     else:
-        pdf.cell(0, 8, "Nenhuma tarefa registrada para este projeto.", ln=True)
+        pdf.cell(0, 8, "Nenhuma tarefa registrada.", ln=True)
     
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 8)
@@ -108,7 +105,6 @@ if df_projetos.empty: df_projetos = pd.DataFrame(columns=cols_proj)
 else:
     for col in cols_proj:
         if col not in df_projetos.columns: df_projetos[col] = ""
-    # Numéricos
     df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
     df_projetos["Area_m2"] = pd.to_numeric(df_projetos["Area_m2"], errors="coerce").fillna(0.0)
 
@@ -120,7 +116,6 @@ if df_tarefas.empty: df_tarefas = pd.DataFrame(columns=cols_task)
 else:
     for col in cols_task:
         if col not in df_tarefas.columns: df_tarefas[col] = ""
-    # Tratamento de Datas para Gráficos
     df_tarefas["Data_Deadline"] = pd.to_datetime(df_tarefas["Data_Deadline"], errors="coerce")
     df_tarefas["Data_Inicio"] = pd.to_datetime(df_tarefas["Data_Inicio"], errors="coerce")
     df_tarefas["Horas_Gastas"] = pd.to_numeric(df_tarefas["Horas_Gastas"], errors="coerce").fillna(0.0)
@@ -133,14 +128,14 @@ else:
     df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"], errors="coerce")
 
 
-# --- MENU LATERAL (NOVA ESTRUTURA) ---
+# --- MENU LATERAL ---
 st.sidebar.title("🏗️ Engenharia 360º")
 aba = st.sidebar.radio("Menu Principal", 
     ["Dash Operacional", "Dash Financeiro", "Cadastro Projetos", "Controle de Tarefas", "Controle Financeiro"]
 )
 
 # ==============================================================================
-# ABA 1: DASHBOARD OPERACIONAL (Produção, Prazos e Equipe)
+# ABA 1: DASHBOARD OPERACIONAL
 # ==============================================================================
 if aba == "Dash Operacional":
     st.header("⚙️ Dashboard Operacional")
@@ -149,52 +144,40 @@ if aba == "Dash Operacional":
     if df_projetos.empty:
         st.warning("Cadastre projetos para iniciar.")
     else:
-        # --- FILTROS RÁPIDOS ---
         hoje = pd.to_datetime(get_today_date())
-        
-        # Tarefas Pendentes
         pendentes = df_tarefas[df_tarefas["Status"] != "Concluído"].copy()
         
-        # Atrasadas
         atrasadas = pendentes[pendentes["Data_Deadline"] < hoje]
-        
-        # Urgentes (Vencem hoje ou amanhã)
-        urgentes = pendentes[
-            (pendentes["Data_Deadline"] >= hoje) & 
-            (pendentes["Data_Deadline"] <= hoje + timedelta(days=1))
-        ]
-        
-        # Projetos Ativos
+        urgentes = pendentes[(pendentes["Data_Deadline"] >= hoje) & (pendentes["Data_Deadline"] <= hoje + timedelta(days=1))]
         proj_ativos = df_projetos[df_projetos["Status_Geral"] == "Ativo"]
 
-        # --- KPIs ---
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Projetos em Andamento", len(proj_ativos))
         k2.metric("Tarefas Atrasadas", len(atrasadas), delta=-len(atrasadas), delta_color="inverse")
         k3.metric("Urgentes (48h)", len(urgentes), delta="Atenção" if len(urgentes) > 0 else "Ok", delta_color="inverse")
         k4.metric("Total Pendências", len(pendentes))
 
-        # --- GRÁFICOS ---
         g1, g2 = st.columns([2, 1])
         
         with g1:
-            st.subheader("📅 Cronograma de Entregas (Gantt)")
+            st.subheader("📅 Cronograma (Gantt)")
             if not pendentes.empty:
-                # Ajuste para Gantt não quebrar se faltar data inicio
                 tasks_gantt = pendentes.copy()
                 mask_sem_ini = pd.isna(tasks_gantt["Data_Inicio"])
                 tasks_gantt.loc[mask_sem_ini, "Data_Inicio"] = tasks_gantt.loc[mask_sem_ini, "Data_Deadline"] - timedelta(days=5)
-                
-                # Merge com nome
                 tasks_gantt = pd.merge(tasks_gantt, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
+                tasks_gantt = tasks_gantt.dropna(subset=["Data_Inicio", "Data_Deadline"])
                 
-                fig_gantt = px.timeline(tasks_gantt, x_start="Data_Inicio", x_end="Data_Deadline", 
-                                        y="Cliente", color="Responsavel", hover_data=["Descricao", "Status"],
-                                        color_discrete_map={"GABRIEL": "#3366CC", "MILENNA": "#DC3912"})
-                fig_gantt.update_yaxes(autorange="reversed")
-                st.plotly_chart(fig_gantt, use_container_width=True)
+                if not tasks_gantt.empty:
+                    fig_gantt = px.timeline(tasks_gantt, x_start="Data_Inicio", x_end="Data_Deadline", 
+                                            y="Cliente", color="Responsavel", hover_data=["Descricao", "Status"],
+                                            color_discrete_map={"GABRIEL": "#3366CC", "MILENNA": "#DC3912"})
+                    fig_gantt.update_yaxes(autorange="reversed")
+                    st.plotly_chart(fig_gantt, use_container_width=True)
+                else:
+                    st.info("Datas insuficientes para gerar gráfico.")
             else:
-                st.info("Tudo em dia! Nenhuma tarefa pendente.")
+                st.info("Nenhuma tarefa pendente.")
 
         with g2:
             st.subheader("👥 Carga de Trabalho")
@@ -205,89 +188,96 @@ if aba == "Dash Operacional":
                 st.plotly_chart(fig_carga, use_container_width=True)
 
         st.markdown("---")
-        
-        # --- PDF RELATÓRIO ---
         c_pdf1, c_pdf2 = st.columns([3, 1])
-        c_pdf1.subheader("📄 Gerador de Relatório de Status")
-        proj_sel_pdf = c_pdf1.selectbox("Selecione o Projeto para gerar PDF:", proj_ativos["Cliente"].unique())
-        
-        if c_pdf2.button("Gerar Relatório PDF"):
-            # Buscar dados
-            dados_p = df_projetos[df_projetos["Cliente"] == proj_sel_pdf].iloc[0]
-            tasks_p = df_tarefas[df_tarefas["ID_Projeto"] == dados_p["ID_Projeto"]]
-            
-            pdf_bytes = gerar_pdf_status(dados_p, tasks_p)
-            c_pdf2.download_button("📥 Baixar Arquivo", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
-
+        c_pdf1.subheader("📄 Gerador de Relatório")
+        if not proj_ativos.empty:
+            proj_sel_pdf = c_pdf1.selectbox("Selecione o Projeto:", proj_ativos["Cliente"].unique())
+            if c_pdf2.button("Gerar Relatório PDF"):
+                dados_p = df_projetos[df_projetos["Cliente"] == proj_sel_pdf].iloc[0]
+                tasks_p = df_tarefas[df_tarefas["ID_Projeto"] == dados_p["ID_Projeto"]]
+                pdf_bytes = gerar_pdf_status(dados_p, tasks_p)
+                c_pdf2.download_button("📥 Baixar Arquivo", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (Caixa, Recebimentos e Lucro)
+# ABA 2: DASHBOARD FINANCEIRO (Agora com Inteligência Comercial)
 # ==============================================================================
 elif aba == "Dash Financeiro":
-    st.header("💰 Dashboard Financeiro")
+    st.header("💰 Dashboard Financeiro e Comercial")
     st.markdown("---")
     
     if df_financeiro.empty:
-        st.warning("Nenhum lançamento financeiro registrado. Vá na aba 'Controle Financeiro'.")
+        st.warning("Sem dados financeiros.")
     else:
-        # Cálculos de KPI
+        df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
+        
         total_previsto = df_financeiro["Valor"].sum()
         recebido = df_financeiro[df_financeiro["Status"] == "Pago"]["Valor"].sum()
         a_receber = df_financeiro[df_financeiro["Status"] == "Pendente"]["Valor"].sum()
         
-        # Inadimplência / Atrasados (Vencidos e não pagos)
         hoje = pd.to_datetime(get_today_date())
-        atrasados = df_financeiro[
-            (df_financeiro["Status"] == "Pendente") & 
-            (df_financeiro["Vencimento"] < hoje)
-        ]
+        atrasados = df_fin_calc[(df_fin_calc["Status"] == "Pendente") & (df_fin_calc["Vencimento"] < hoje)]
         valor_atrasado = atrasados["Valor"].sum()
 
-        # KPIs
         f1, f2, f3, f4 = st.columns(4)
-        f1.metric("Total em Caixa (Recebido)", format_currency_br(recebido))
-        f2.metric("A Receber (Futuro)", format_currency_br(a_receber))
+        f1.metric("Total em Caixa", format_currency_br(recebido))
+        f2.metric("A Receber", format_currency_br(a_receber))
         f3.metric("⚠️ Em Atraso", format_currency_br(valor_atrasado), delta_color="inverse")
         
-        # Cálculo de Lucratividade (Valor Hora)
-        total_horas = df_tarefas["Horas_Gastas"].sum()
-        vlr_hora = (total_previsto / total_horas) if total_horas > 0 else 0
-        f4.metric("Valor Hora Médio", f"R$ {vlr_hora:.2f}/h")
+        # Métrica Extra: Preço Médio do m² (Considerando valor de contrato)
+        area_total = df_projetos["Area_m2"].sum()
+        contrato_total = df_projetos["Proposta_Aceita_R$"].sum()
+        preco_m2 = (contrato_total / area_total) if area_total > 0 else 0
+        f4.metric("Preço Médio/m²", format_currency_br(preco_m2))
 
         st.markdown("---")
+        
+        # --- ANÁLISE COMERCIAL (USANDO TIPO E CIDADE) ---
+        st.subheader("📊 Inteligência Comercial")
+        c_tipo, c_cidade = st.columns(2)
+        
+        with c_tipo:
+            # Agrupar Valor de Contrato por Tipo
+            if not df_projetos.empty:
+                df_tipo = df_projetos.groupby("Tipo")["Proposta_Aceita_R$"].sum().reset_index()
+                fig_tipo = px.pie(df_tipo, values="Proposta_Aceita_R$", names="Tipo", title="Faturamento por Tipo de Obra", hole=0.4)
+                st.plotly_chart(fig_tipo, use_container_width=True)
+                
+        with c_cidade:
+            # Agrupar Valor de Contrato por Cidade
+            if not df_projetos.empty:
+                df_cidade = df_projetos.groupby("Cidade")["Proposta_Aceita_R$"].sum().reset_index()
+                fig_cidade = px.bar(df_cidade, x="Cidade", y="Proposta_Aceita_R$", title="Faturamento por Cidade", text_auto=True)
+                fig_cidade.update_layout(yaxis_title="Valor Contratado (R$)")
+                st.plotly_chart(fig_cidade, use_container_width=True)
 
-        # --- GRÁFICOS FINANCEIROS ---
+        st.markdown("---")
+        
+        # --- FLUXO E ATRASOS ---
         fg1, fg2 = st.columns(2)
         
         with fg1:
-            st.subheader("📈 Previsão de Receita (Fluxo de Caixa)")
-            # Agrupar recebimentos por mês de vencimento
-            df_fin_graf = df_financeiro.copy()
-            df_fin_graf["Mes_Ano"] = df_fin_graf["Vencimento"].dt.strftime("%Y-%m")
-            fluxo = df_fin_graf.groupby("Mes_Ano")["Valor"].sum().reset_index()
-            
-            fig_fluxo = px.bar(fluxo, x="Mes_Ano", y="Valor", title="Entradas por Mês (Vencimento)", text_auto=True)
-            st.plotly_chart(fig_fluxo, use_container_width=True)
+            st.subheader("📈 Fluxo de Entradas (Vencimento)")
+            if not df_fin_calc.empty:
+                df_fin_calc["Mes_Ano"] = df_fin_calc["Vencimento"].dt.strftime("%Y-%m")
+                fluxo = df_fin_calc.groupby("Mes_Ano")["Valor"].sum().reset_index()
+                fig_fluxo = px.bar(fluxo, x="Mes_Ano", y="Valor", text_auto=True)
+                st.plotly_chart(fig_fluxo, use_container_width=True)
             
         with fg2:
-            st.subheader("🚨 Contas em Atraso / Pendentes")
+            st.subheader("🚨 Contas em Atraso")
             if not atrasados.empty:
-                # Merge para mostrar nome do cliente
                 atrasados_view = pd.merge(atrasados, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
-                st.dataframe(
-                    atrasados_view[["Cliente", "Descricao", "Vencimento", "Valor"]],
-                    hide_index=True,
-                    use_container_width=True
-                )
+                atrasados_view["Vencimento_Fmt"] = atrasados_view["Vencimento"].apply(lambda x: format_date_br(x))
+                atrasados_view["Valor_Fmt"] = atrasados_view["Valor"].apply(lambda x: format_currency_br(x))
+                st.dataframe(atrasados_view[["Cliente", "Descricao", "Vencimento_Fmt", "Valor_Fmt"]], hide_index=True, use_container_width=True)
             else:
-                st.success("Nenhuma conta atrasada! O caixa está saudável.")
-
+                st.success("Tudo em dia!")
 
 # ==============================================================================
-# ABA 3: CADASTRO PROJETOS (Mantido com melhorias)
+# ABA 3: CADASTRO PROJETOS (Agora com Tabela de Gestão de Status)
 # ==============================================================================
 elif aba == "Cadastro Projetos":
-    st.header("📂 Projetos e Documentação (GED)")
+    st.header("📂 Projetos e Documentação")
     
     if not df_projetos.empty and "Origem" in df_projetos.columns:
         lista_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
@@ -300,13 +290,12 @@ elif aba == "Cadastro Projetos":
             with c1:
                 cliente = st.text_input("Nome do Cliente")
                 cidade = st.text_input("Cidade da Obra")
-                origem = st.text_input("Origem (Ex: Indicação)")
+                origem = st.text_input("Origem")
                 tipo = st.selectbox("Tipo", ["Residencial Unifamiliar", "Residencial Multifamiliar", "Comercial", "Reforma", "Industrial"])
                 area = st.number_input("Área (m²)", min_value=0.0)
             with c2:
                 valor = st.number_input("Valor Proposta (R$)", min_value=0.0, step=100.0)
                 servicos = st.multiselect("Serviços", ["Modelagem BIM", "Compatibilização", "Pranchas"])
-                
                 st.markdown("**Links Rápidos (GED):**")
                 link_prop = st.text_input("Link Pasta Financeiro/Proposta")
                 link_exec = st.text_input("Link Pasta Projetos/Executivo")
@@ -315,42 +304,73 @@ elif aba == "Cadastro Projetos":
             if st.form_submit_button("Salvar Projeto"):
                 if cliente:
                     novo = pd.DataFrame([{
-                        "ID_Projeto": len(df_projetos) + 1,
-                        "Cliente": cliente, "Origem": origem, "Tipo": tipo, "Area_m2": area,
-                        "Proposta_Aceita_R$": valor, "Servicos": ", ".join(servicos),
-                        "Link_Proposta": link_prop, "Link_Pasta_Executivo": link_exec, 
-                        "Link_Pasta_Renders": link_render, "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
-                        "Status_Geral": "Ativo", "Cidade": cidade, 
-                        "Historico_Log": f"Criado em {get_now_br()}"
+                        "ID_Projeto": len(df_projetos) + 1, "Cliente": cliente, "Origem": origem, 
+                        "Tipo": tipo, "Area_m2": area, "Proposta_Aceita_R$": valor, 
+                        "Servicos": ", ".join(servicos), "Link_Proposta": link_prop, 
+                        "Link_Pasta_Executivo": link_exec, "Link_Pasta_Renders": link_render, 
+                        "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
+                        "Status_Geral": "Ativo", "Cidade": cidade, "Historico_Log": f"Criado em {get_now_br()}"
                     }])
                     save_data(pd.concat([df_projetos, novo], ignore_index=True), "Projetos")
                     st.success("Salvo!")
                     st.rerun()
 
-    st.subheader("🗂️ Acesso Rápido aos Arquivos")
+    st.divider()
+    
+    # --- TABELA DE GESTÃO DE STATUS (ADICIONADA NOVAMENTE) ---
+    st.subheader("📋 Gerenciar Carteira de Projetos")
+    if not df_projetos.empty:
+        st.info("Aqui você pode mudar o status para 'Concluído' ou corrigir dados.")
+        
+        # Preparar dados para edição segura
+        df_editor = df_projetos.copy()
+        
+        edited_df = st.data_editor(
+            df_editor,
+            column_config={
+                "Status_Geral": st.column_config.SelectboxColumn(
+                    "Status", options=["Ativo", "Concluído", "Cancelado", "Suspenso"], required=True
+                ),
+                "Proposta_Aceita_R$": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "Link_Proposta": st.column_config.LinkColumn("Financ."),
+                "Link_Pasta_Executivo": st.column_config.LinkColumn("Proj."),
+                "ID_Projeto": st.column_config.NumberColumn("ID", disabled=True),
+                "Historico_Log": st.column_config.TextColumn("Log", disabled=True)
+            },
+            hide_index=True,
+            use_container_width=True,
+            num_rows="dynamic"
+        )
+        
+        if st.button("Salvar Alterações de Projetos"):
+            # Converter datas para string antes de salvar para não dar erro
+            edited_df["Data_Cadastro"] = pd.to_datetime(edited_df["Data_Cadastro"]).dt.strftime("%Y-%m-%d")
+            save_data(edited_df, "Projetos")
+            st.success("Carteira atualizada!")
+            st.rerun()
+
+    # --- ACESSO RÁPIDO (GED) ---
+    st.divider()
+    st.subheader("🗂️ Acesso Rápido (Ativos)")
     if not df_projetos.empty:
         ativos = df_projetos[df_projetos["Status_Geral"]=="Ativo"]
         for idx, row in ativos.iterrows():
             with st.container(border=True):
                 c_info, c_links = st.columns([2, 3])
                 c_info.markdown(f"**{row['Cliente']}** ({row['Cidade']})")
-                
                 def criar_botao_seguro(label, link_url):
                     url_str = str(link_url).strip()
-                    if url_str and url_str.lower() != "nan" and url_str != "None":
+                    if url_str and url_str.lower() != "nan" and url_str != "None" and url_str != "":
                         c_links.link_button(label, url_str)
-
                 criar_botao_seguro("💰 Financeiro", row["Link_Proposta"])
                 criar_botao_seguro("📂 Projetos", row["Link_Pasta_Executivo"])
                 criar_botao_seguro("🖼️ Renders", row["Link_Pasta_Renders"])
 
-
 # ==============================================================================
-# ABA 4: CONTROLE DE TAREFAS (Mantido e Corrigido)
+# ABA 4: CONTROLE DE TAREFAS
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Atividades e Timesheet")
-    
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
     with st.expander("➕ Nova Tarefa", expanded=False):
@@ -360,7 +380,6 @@ elif aba == "Controle de Tarefas":
             fase = c1.selectbox("Fase", ["Modelagem", "Compatibilização", "Pranchas"])
             resp = c2.selectbox("Responsável", ["GABRIEL", "MILENNA"])
             prio = c3.selectbox("Prioridade", ["Alta", "Média", "Baixa"])
-            
             desc = st.text_input("Descrição")
             d_ini = st.date_input("Início")
             d_fim = st.date_input("Prazo")
@@ -378,18 +397,15 @@ elif aba == "Controle de Tarefas":
                     save_data(pd.concat([df_tarefas, nova], ignore_index=True), "Tarefas")
                     st.success("Criado!")
                     st.rerun()
-
+    
     st.divider()
-
     if not df_tarefas.empty:
         df_full = pd.merge(df_tarefas, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
-        
         resp_f = st.multiselect("Filtrar Responsável", ["GABRIEL", "MILENNA"], default=["GABRIEL", "MILENNA"])
         df_full = df_full[df_full["Responsavel"].isin(resp_f)]
 
         for prio in ["Alta", "Média", "Baixa"]:
             subset = df_full[(df_full["Prioridade"] == prio) & (df_full["Status"] != "Concluído")]
-            
             if not subset.empty:
                 st.markdown(f"### {prio}")
                 for idx, row in subset.iterrows():
@@ -398,13 +414,13 @@ elif aba == "Controle de Tarefas":
                         c1.markdown(f"**{row['Cliente']}**")
                         c1.text(f"{row['Descricao']}")
                         c2.text(f"Até: {format_date_br(row['Data_Deadline'])}")
-                        
+                        st.write("Status:")
                         novo_status = c3.selectbox("Status", ["A Fazer", "Em Andamento", "Revisão", "Concluído"], 
-                                                   index=["A Fazer", "Em Andamento", "Revisão", "Concluído"].index(row['Status']), key=f"s_{idx}")
-                        
+                                                   index=["A Fazer", "Em Andamento", "Revisão", "Concluído"].index(row['Status']), 
+                                                   key=f"s_{idx}", label_visibility="collapsed")
                         horas = c4.number_input("Horas Gastas", value=float(row.get("Horas_Gastas", 0.0)), step=0.5, key=f"h_{idx}")
                         
-                        if c4.button("💾", key=f"b_{idx}"):
+                        if c4.button("💾 Salvar", key=f"b_{idx}"):
                             df_tarefas.at[idx, "Status"] = novo_status
                             df_tarefas.at[idx, "Horas_Gastas"] = horas
                             if novo_status == "Concluído" and row['Status'] != "Concluído":
@@ -417,19 +433,20 @@ elif aba == "Controle de Tarefas":
             concluidas = df_full[df_full["Status"] == "Concluído"]
             if not concluidas.empty:
                 for idx, row in concluidas.iterrows():
-                    st.success(f"**{row['Cliente']}**: {row['Descricao']} (Entregue em: {row.get('Data_Conclusao', '-')})")
-                    if st.button("Reabrir", key=f"re_{idx}"):
-                        df_tarefas.at[idx, "Status"] = "Em Andamento"
-                        df_tarefas.at[idx, "Data_Conclusao"] = ""
-                        save_data(df_tarefas, "Tarefas")
-                        st.rerun()
+                    with st.container(border=True):
+                        col_a, col_b = st.columns([5, 1])
+                        col_a.markdown(f"~~**{row['Cliente']}** - {row['Descricao']}~~ (Entregue: {row.get('Data_Conclusao', '-')})")
+                        if col_b.button("Reabrir", key=f"re_{idx}"):
+                            df_tarefas.at[idx, "Status"] = "Em Andamento"
+                            df_tarefas.at[idx, "Data_Conclusao"] = ""
+                            save_data(df_tarefas, "Tarefas")
+                            st.rerun()
 
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO (Lançamentos)
+# ABA 5: CONTROLE FINANCEIRO
 # ==============================================================================
 elif aba == "Controle Financeiro":
-    st.header("💰 Lançamento de Recebimentos")
-    
+    st.header("💰 Lançamentos")
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
     with st.expander("➕ Novo Lançamento", expanded=True):
@@ -450,16 +467,17 @@ elif aba == "Controle Financeiro":
                         "Descricao": desc_fin, "Valor": valor_fin,
                         "Vencimento": str(venc_fin), "Status": status_fin, "Data_Pagamento": data_pg
                     }])
-                    save_data(pd.concat([df_financeiro, novo_fin], ignore_index=True), "Financeiro")
+                    
+                    df_final = pd.concat([df_financeiro, novo_fin], ignore_index=True)
+                    df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
+                    save_data(df_final, "Financeiro")
                     st.success("Registrado!")
                     st.rerun()
     
     st.divider()
-    
     if not df_financeiro.empty:
         df_fin_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
         st.subheader("Extrato")
-        
         for idx, row in df_fin_view.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 2, 2])
@@ -471,8 +489,10 @@ elif aba == "Controle Financeiro":
                         real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
                         df_financeiro.at[real_idx, "Status"] = "Pago"
                         df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
+                        
+                        df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
                         save_data(df_financeiro, "Financeiro")
                         st.balloons()
                         st.rerun()
                 else:
-                    c3.success("Pago")
+                    c3.success(f"Pago em: {format_date_br(row['Data_Pagamento'])}")
