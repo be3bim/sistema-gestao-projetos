@@ -208,7 +208,7 @@ if aba == "Dash Operacional":
                 c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (CORREÇÃO DE TIPO DE DATA)
+# ABA 2: DASHBOARD FINANCEIRO (COM INTELIGÊNCIA COMERCIAL E PREÇO/M²)
 # ==============================================================================
 elif aba == "Dash Financeiro":
     ano_atual = datetime.now().year
@@ -218,60 +218,46 @@ elif aba == "Dash Financeiro":
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
-        # --- PREPARAÇÃO DOS DADOS (RECEITAS) ---
-        df_fin_calc = df_financeiro.copy()
-        
-        # Converte datas originais
+        # --- PREPARAÇÃO DOS DADOS ---
+        # 1. Financeiro (Entradas)
+        df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
         df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"], errors="coerce")
         df_fin_calc["Data_Pagamento"] = pd.to_datetime(df_fin_calc["Data_Pagamento"], errors="coerce")
         
-        # Cria a Data Híbrida (Caixa vs Competência)
+        # Data Híbrida (Caixa vs Competência)
         df_fin_calc["Data_Considerada"] = df_fin_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
         )
-        
-        # CORREÇÃO CRÍTICA 1: Força a coluna nova a ser DATA antes de extrair o ano
         df_fin_calc["Data_Considerada"] = pd.to_datetime(df_fin_calc["Data_Considerada"], errors="coerce")
         df_fin_calc["Ano_Ref"] = df_fin_calc["Data_Considerada"].dt.year
         
-        # --- PREPARAÇÃO DOS DADOS (DESPESAS) ---
-        df_desp_calc = df_despesas.copy()
+        # 2. Despesas (Saídas)
+        df_desp_calc = df_despesas.dropna(subset=["Vencimento"]).copy()
         df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"], errors="coerce")
         df_desp_calc["Data_Pagamento"] = pd.to_datetime(df_desp_calc["Data_Pagamento"], errors="coerce")
         
-        # Cria a Data Híbrida para despesas
         df_desp_calc["Data_Considerada"] = df_desp_calc.apply(
             lambda x: x["Data_Pagamento"] if (x["Status"] == "Pago" and pd.notnull(x["Data_Pagamento"])) else x["Vencimento"], 
             axis=1
         )
-
-        # CORREÇÃO CRÍTICA 2: Força a coluna nova a ser DATA antes de extrair o ano
         df_desp_calc["Data_Considerada"] = pd.to_datetime(df_desp_calc["Data_Considerada"], errors="coerce")
         df_desp_calc["Ano_Ref"] = df_desp_calc["Data_Considerada"].dt.year
 
-        # --- FILTRAR APENAS O QUE ACONTECEU (OU VAI ACONTECER) NESTE ANO ---
+        # --- FILTRO ANO ATUAL ---
         entradas_ano = df_fin_calc[df_fin_calc["Ano_Ref"] == ano_atual]
         saidas_ano = df_desp_calc[df_desp_calc["Ano_Ref"] == ano_atual]
         
-        # 1. RECEITA BRUTA
+        # Cálculos de Totais
         receita_bruta = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor"].sum()
-        
-        # 2. IMPOSTOS
         impostos_pagos = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor_Imposto"].sum()
-        
-        # 3. CUSTOS FIXOS
         custos_fixos_pagos = saidas_ano[saidas_ano["Status"] == "Pago"]["Valor"].sum()
-        
-        # 4. LUCRO LÍQUIDO
         lucro_liquido = receita_bruta - impostos_pagos - custos_fixos_pagos
         margem_lucro = (lucro_liquido / receita_bruta * 100) if receita_bruta > 0 else 0
-        
-        # 5. PREVISÃO
         a_receber = entradas_ano[entradas_ano["Status"] == "Pendente"]["Valor"].sum()
         a_pagar = saidas_ano[saidas_ano["Status"] == "Pendente"]["Valor"].sum()
 
-        # --- EXIBIÇÃO KPIs ---
+        # --- KPIs ---
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Receita Bruta (Caixa)", format_currency_br(receita_bruta))
         c2.metric("Impostos (15.5%)", format_currency_br(impostos_pagos), delta="- Gov", delta_color="inverse")
@@ -281,10 +267,10 @@ elif aba == "Dash Financeiro":
 
         st.markdown("---")
         
-        # --- GRÁFICOS ---
+        # --- GRÁFICOS PRINCIPAIS (Fluxo) ---
         g1, g2 = st.columns(2)
         with g1:
-            st.subheader(f"📊 Composição Financeira ({ano_atual})")
+            st.subheader(f"📊 Composição Financeira")
             dados_fin = pd.DataFrame({
                 "Categoria": ["Receita Bruta", "Impostos", "Custos Fixos", "Lucro Líquido"],
                 "Valor": [receita_bruta, -impostos_pagos, -custos_fixos_pagos, lucro_liquido]
@@ -294,9 +280,7 @@ elif aba == "Dash Financeiro":
             st.plotly_chart(fig_fin, use_container_width=True)
             
         with g2:
-            st.subheader(f"📈 Fluxo Mensal Real ({ano_atual})")
-            
-            # Agrupa usando a DATA CONSIDERADA (Data Real)
+            st.subheader(f"📈 Fluxo Mensal Real")
             if not entradas_ano.empty:
                 entradas_ano["Mes"] = entradas_ano["Data_Considerada"].dt.strftime("%Y-%m")
                 fluxo_ent = entradas_ano.groupby("Mes")["Valor"].sum().reset_index()
@@ -314,13 +298,89 @@ elif aba == "Dash Financeiro":
             df_fluxo = pd.concat([fluxo_ent, fluxo_sai])
             
             if not df_fluxo.empty:
-                # Ordenar cronologicamente
                 df_fluxo = df_fluxo.sort_values("Mes")
                 fig_fluxo = px.bar(df_fluxo, x="Mes", y="Valor", color="Tipo", barmode="group",
                                    color_discrete_map={"Entrada": "#27AE60", "Saída": "#E74C3C"})
                 st.plotly_chart(fig_fluxo, use_container_width=True)
             else:
                 st.info("Sem movimentações neste ano.")
+
+        st.markdown("---")
+
+        # =========================================================
+        # NOVA SEÇÃO: INTELIGÊNCIA COMERCIAL (DADOS DO CADASTRO)
+        # =========================================================
+        st.subheader(f"🧠 Inteligência Comercial ({ano_atual})")
+        
+        # Cruzamento de Dados: Financeiro (Deste ano) + Projetos (Cadastro)
+        # Trazemos as colunas: Origem, Tipo, Cidade, Area_m2 para dentro da tabela financeira
+        df_analise = pd.merge(entradas_ano, df_projetos[["ID_Projeto", "Cliente", "Origem", "Tipo", "Cidade", "Area_m2"]], 
+                              on="ID_Projeto", how="left")
+        
+        if df_analise.empty:
+            st.info("Não há receitas vinculadas a projetos neste ano para gerar análise.")
+        else:
+            col_i1, col_i2 = st.columns(2)
+            
+            # 1. ANÁLISE DE ORIGEM (De onde vem o dinheiro?)
+            with col_i1:
+                st.markdown("**💰 Receita por Origem do Cliente**")
+                if "Origem" in df_analise.columns:
+                    # Agrupa receita por origem
+                    df_origem = df_analise.groupby("Origem")["Valor"].sum().reset_index()
+                    if not df_origem.empty:
+                        fig_origem = px.pie(df_origem, values="Valor", names="Origem", hole=0.4,
+                                            color_discrete_sequence=px.colors.qualitative.Pastel)
+                        st.plotly_chart(fig_origem, use_container_width=True)
+                    else:
+                        st.write("Sem dados de origem.")
+
+            # 2. ANÁLISE DE TIPO (Nicho de Mercado)
+            with col_i2:
+                st.markdown("**🏗️ Receita por Tipo de Obra**")
+                if "Tipo" in df_analise.columns:
+                    df_tipo = df_analise.groupby("Tipo")["Valor"].sum().reset_index()
+                    if not df_tipo.empty:
+                        fig_tipo = px.bar(df_tipo, x="Valor", y="Tipo", orientation='h', text_auto=True,
+                                          title="O que mais faturou este ano")
+                        st.plotly_chart(fig_tipo, use_container_width=True)
+                    else:
+                        st.write("Sem dados de tipo.")
+
+            col_i3, col_i4 = st.columns(2)
+
+            # 3. ANÁLISE DE CIDADE (Geografia)
+            with col_i3:
+                st.markdown("**🗺️ Receita por Cidade**")
+                if "Cidade" in df_analise.columns:
+                    df_cid = df_analise.groupby("Cidade")["Valor"].sum().reset_index()
+                    fig_cid = px.bar(df_cid, x="Cidade", y="Valor", text_auto=True)
+                    st.plotly_chart(fig_cid, use_container_width=True)
+
+            # 4. ANÁLISE DE PREÇO/M2 (Eficiência de Contrato)
+            with col_i4:
+                st.markdown("**📏 Preço Médio cobrado por m² (Estimativa)**")
+                # Aqui precisamos pegar o valor TOTAL do contrato lá da tabela de projetos, não só o recebido
+                # Filtramos projetos que tiveram algum pagamento este ano
+                ids_ativos_ano = df_analise["ID_Projeto"].unique()
+                df_proj_ano = df_projetos[df_projetos["ID_Projeto"].isin(ids_ativos_ano)].copy()
+                
+                if not df_proj_ano.empty:
+                    # Calcula Preço/m2 por projeto
+                    df_proj_ano["Preco_m2"] = df_proj_ano["Proposta_Aceita_R$"] / df_proj_ano["Area_m2"]
+                    # Limpa infinitos ou erros
+                    df_proj_ano = df_proj_ano[df_proj_ano["Preco_m2"] > 0]
+                    df_proj_ano = df_proj_ano.replace([float('inf'), -float('inf')], 0)
+                    
+                    # Agrupa média por TIPO
+                    df_m2 = df_proj_ano.groupby("Tipo")["Preco_m2"].mean().reset_index()
+                    
+                    fig_m2 = px.bar(df_m2, x="Tipo", y="Preco_m2", text_auto=".2f",
+                                    title="Média de R$/m² por Tipo", 
+                                    labels={"Preco_m2": "Preço Médio (R$/m²)"})
+                    st.plotly_chart(fig_m2, use_container_width=True)
+                else:
+                    st.write("Dados insuficientes para cálculo de área.")
 # ==============================================================================
 # ABA 3: CADASTRO PROJETOS
 # ==============================================================================
