@@ -48,16 +48,12 @@ def gerar_pdf_status(projeto_dados, tarefas_proj):
     pdf = PDFRelatorio()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    
-    # Cabeçalho
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(0, 10, f"Cliente: {projeto_dados['Cliente']}", ln=True, fill=True)
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 8, f"Local: {projeto_dados['Cidade']} | Tipo: {projeto_dados['Tipo']}", ln=True)
     pdf.cell(0, 8, f"Status Atual: {projeto_dados['Status_Geral']}", ln=True)
     pdf.ln(5)
-    
-    # Tarefas
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 10, "Status das Atividades Recentes:", ln=True)
     pdf.set_font("Arial", size=10)
@@ -76,7 +72,6 @@ def gerar_pdf_status(projeto_dados, tarefas_proj):
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 8)
     pdf.cell(0, 10, "Documento gerado automaticamente pelo Sistema de Gestão.", ln=True)
-    
     return pdf.output(dest='S').encode('latin-1')
 
 # --- CONEXÃO ---
@@ -96,11 +91,12 @@ def save_data(df, worksheet_name):
 df_projetos = load_data("Projetos")
 df_tarefas = load_data("Tarefas")
 df_financeiro = load_data("Financeiro")
+df_despesas = load_data("Despesas") # Nova Aba
 
-# Garantir Colunas PROJETOS
+# 1. Colunas PROJETOS
 cols_proj = ["ID_Projeto", "Cliente", "Origem", "Tipo", "Area_m2", "Proposta_Aceita_R$", 
-             "Servicos", "Link_Proposta", "Data_Cadastro", "Status_Geral", "Cidade", 
-             "Historico_Log", "Link_Pasta_Executivo", "Link_Pasta_Renders"]
+             "Servicos", "Link_Proposta", "Link_Pasta_Executivo", "Link_Pasta_Renders", 
+             "Data_Cadastro", "Status_Geral", "Cidade", "Historico_Log"]
 if df_projetos.empty: df_projetos = pd.DataFrame(columns=cols_proj)
 else:
     for col in cols_proj:
@@ -108,7 +104,7 @@ else:
     df_projetos["Proposta_Aceita_R$"] = pd.to_numeric(df_projetos["Proposta_Aceita_R$"], errors="coerce").fillna(0.0)
     df_projetos["Area_m2"] = pd.to_numeric(df_projetos["Area_m2"], errors="coerce").fillna(0.0)
 
-# Garantir Colunas TAREFAS
+# 2. Colunas TAREFAS
 cols_task = ["ID_Projeto", "Fase", "Disciplina", "Descricao", "Responsavel", 
              "Data_Inicio", "Data_Deadline", "Prioridade", "Status", 
              "Link_Tarefa", "Historico_Log", "Data_Conclusao", "Horas_Gastas"]
@@ -120,18 +116,27 @@ else:
     df_tarefas["Data_Inicio"] = pd.to_datetime(df_tarefas["Data_Inicio"], errors="coerce")
     df_tarefas["Horas_Gastas"] = pd.to_numeric(df_tarefas["Horas_Gastas"], errors="coerce").fillna(0.0)
 
-# Garantir Colunas FINANCEIRO
-cols_fin = ["ID_Lancamento", "ID_Projeto", "Descricao", "Valor", "Vencimento", "Status", "Data_Pagamento"]
+# 3. Colunas FINANCEIRO (Entradas) - Adicionado Valor_Imposto
+cols_fin = ["ID_Lancamento", "ID_Projeto", "Descricao", "Valor", "Vencimento", "Status", "Data_Pagamento", "Valor_Imposto"]
 if df_financeiro.empty: df_financeiro = pd.DataFrame(columns=cols_fin)
 else:
+    if "Valor_Imposto" not in df_financeiro.columns: df_financeiro["Valor_Imposto"] = 0.0
     df_financeiro["Valor"] = pd.to_numeric(df_financeiro["Valor"], errors="coerce").fillna(0.0)
+    df_financeiro["Valor_Imposto"] = pd.to_numeric(df_financeiro["Valor_Imposto"], errors="coerce").fillna(0.0)
     df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"], errors="coerce")
+
+# 4. Colunas DESPESAS (Saídas) - NOVO
+cols_desp = ["ID_Despesa", "Descricao", "Categoria", "Valor", "Vencimento", "Status", "Data_Pagamento"]
+if df_despesas.empty: df_despesas = pd.DataFrame(columns=cols_desp)
+else:
+    df_despesas["Valor"] = pd.to_numeric(df_despesas["Valor"], errors="coerce").fillna(0.0)
+    df_despesas["Vencimento"] = pd.to_datetime(df_despesas["Vencimento"], errors="coerce")
 
 
 # --- MENU LATERAL ---
 st.sidebar.title("🏗️ Engenharia 360º")
 aba = st.sidebar.radio("Menu Principal", 
-    ["Dash Operacional", "Dash Financeiro", "Cadastro Projetos", "Controle de Tarefas", "Controle Financeiro"]
+    ["Dash Operacional", "Dash Financeiro", "Cadastro Projetos", "Controle de Tarefas", "Controle Financeiro", "Controle Despesas"]
 )
 
 # ==============================================================================
@@ -158,7 +163,6 @@ if aba == "Dash Operacional":
         k4.metric("Total Pendências", len(pendentes))
 
         g1, g2 = st.columns([2, 1])
-        
         with g1:
             st.subheader("📅 Cronograma (Gantt)")
             if not pendentes.empty:
@@ -175,9 +179,9 @@ if aba == "Dash Operacional":
                     fig_gantt.update_yaxes(autorange="reversed")
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
-                    st.info("Datas insuficientes para gerar gráfico.")
+                    st.info("Datas insuficientes.")
             else:
-                st.info("Nenhuma tarefa pendente.")
+                st.info("Sem tarefas pendentes.")
 
         with g2:
             st.subheader("👥 Carga de Trabalho")
@@ -189,138 +193,111 @@ if aba == "Dash Operacional":
 
         st.markdown("---")
         c_pdf1, c_pdf2 = st.columns([3, 1])
-        c_pdf1.subheader("📄 Gerador de Relatório")
+        c_pdf1.subheader("📄 Relatório de Status")
         if not proj_ativos.empty:
             proj_sel_pdf = c_pdf1.selectbox("Selecione o Projeto:", proj_ativos["Cliente"].unique())
-            if c_pdf2.button("Gerar Relatório PDF"):
+            if c_pdf2.button("Gerar PDF"):
                 dados_p = df_projetos[df_projetos["Cliente"] == proj_sel_pdf].iloc[0]
                 tasks_p = df_tarefas[df_tarefas["ID_Projeto"] == dados_p["ID_Projeto"]]
                 pdf_bytes = gerar_pdf_status(dados_p, tasks_p)
-                c_pdf2.download_button("📥 Baixar Arquivo", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
+                c_pdf2.download_button("📥 Baixar PDF", data=pdf_bytes, file_name=f"Status_{proj_sel_pdf}.pdf", mime='application/pdf')
 
 # ==============================================================================
-# ABA 2: DASHBOARD FINANCEIRO (COM FILTRO ANUAL INTELIGENTE - 2026)
+# ABA 2: DASHBOARD FINANCEIRO (Agora com Lucro Líquido e Custos)
 # ==============================================================================
 elif aba == "Dash Financeiro":
-    # 1. Detectar o ano atual automaticamente
     ano_atual = datetime.now().year
-    
     st.header(f"💰 Dashboard Financeiro ({ano_atual})")
     st.markdown("---")
     
     if df_financeiro.empty:
         st.warning("Sem dados financeiros.")
     else:
-        # Preparação dos dados: Garante que Vencimento é Data
+        # Preparação
         df_fin_calc = df_financeiro.dropna(subset=["Vencimento"]).copy()
         df_fin_calc["Vencimento"] = pd.to_datetime(df_fin_calc["Vencimento"])
         df_fin_calc["Ano_Venc"] = df_fin_calc["Vencimento"].dt.year
         
-        # --- FILTRO 1: COMPETÊNCIA DO ANO ATUAL (Para métricas de desempenho) ---
-        # Só pega o que vence em 2026 (ou no ano que estiver)
-        df_ano_vigente = df_fin_calc[df_fin_calc["Ano_Venc"] == ano_atual]
-        
-        # Cálculos do Ano
-        total_previsto_ano = df_ano_vigente["Valor"].sum()
-        recebido_ano = df_ano_vigente[df_ano_vigente["Status"] == "Pago"]["Valor"].sum()
-        a_receber_ano = df_ano_vigente[df_ano_vigente["Status"] == "Pendente"]["Valor"].sum()
-        
-        # --- FILTRO 2: COBRANÇA (OPÇÃO B - Acumulado Histórico) ---
-        # Pega TUDO que está pendente e vencido, independente do ano (2024, 2025, 2026...)
-        hoje = pd.to_datetime(get_today_date())
-        atrasados_total = df_fin_calc[
-            (df_fin_calc["Status"] == "Pendente") & 
-            (df_fin_calc["Vencimento"] < hoje)
-        ]
-        valor_atrasado_total = atrasados_total["Valor"].sum()
+        df_desp_calc = df_despesas.dropna(subset=["Vencimento"]).copy()
+        df_desp_calc["Vencimento"] = pd.to_datetime(df_desp_calc["Vencimento"])
+        df_desp_calc["Ano_Venc"] = df_desp_calc["Vencimento"].dt.year
 
-        # KPIs
-        f1, f2, f3, f4 = st.columns(4)
-        f1.metric(f"Total em Caixa ({ano_atual})", format_currency_br(recebido_ano))
-        f2.metric(f"A Receber ({ano_atual})", format_currency_br(a_receber_ano))
+        # --- FILTRO ANO ATUAL ---
+        entradas_ano = df_fin_calc[df_fin_calc["Ano_Venc"] == ano_atual]
+        saidas_ano = df_desp_calc[df_desp_calc["Ano_Venc"] == ano_atual]
         
-        # Atraso mostra o total geral (Dívida antiga + nova)
-        f3.metric("⚠️ Total em Atraso (Geral)", format_currency_br(valor_atrasado_total), delta_color="inverse")
+        # 1. RECEITA BRUTA (Tudo que recebeu)
+        receita_bruta = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor"].sum()
         
-        # Valor Hora (Baseado no faturamento deste ano e horas totais)
-        # Nota: Idealmente as horas deveriam ser filtradas por ano também, mas manteremos simples por enquanto
-        total_horas = df_tarefas["Horas_Gastas"].sum() 
-        vlr_hora = (total_previsto_ano / total_horas) if total_horas > 0 else 0
-        f4.metric(f"Valor Hora Médio ({ano_atual})", f"R$ {vlr_hora:.2f}/h")
+        # 2. IMPOSTOS (Os 15,5% retidos automaticamente ao receber)
+        impostos_pagos = entradas_ano[entradas_ano["Status"] == "Pago"]["Valor_Imposto"].sum()
+        
+        # 3. CUSTOS FIXOS (Contador, etc que foi pago)
+        custos_fixos_pagos = saidas_ano[saidas_ano["Status"] == "Pago"]["Valor"].sum()
+        
+        # 4. LUCRO LÍQUIDO (O que sobrou)
+        lucro_liquido = receita_bruta - impostos_pagos - custos_fixos_pagos
+        margem_lucro = (lucro_liquido / receita_bruta * 100) if receita_bruta > 0 else 0
+        
+        # 5. PREVISÃO (A Receber e A Pagar)
+        a_receber = entradas_ano[entradas_ano["Status"] == "Pendente"]["Valor"].sum()
+        a_pagar = saidas_ano[saidas_ano["Status"] == "Pendente"]["Valor"].sum()
 
-        st.markdown("---")
-        
-        # --- INTELIGÊNCIA COMERCIAL (Baseada apenas no Ano Atual) ---
-        st.subheader(f"📊 Inteligência Comercial ({ano_atual})")
-        
-        # Precisamos cruzar o financeiro deste ano com os dados do projeto (Tipo/Cidade)
-        # 1. Pegamos os lançamentos deste ano
-        df_analise = pd.merge(df_ano_vigente, df_projetos[["ID_Projeto", "Tipo", "Cidade"]], on="ID_Projeto", how="left")
-        
-        c_tipo, c_cidade = st.columns(2)
-        
-        with c_tipo:
-            if not df_analise.empty:
-                # Soma os valores dos lançamentos por Tipo de Obra
-                df_tipo = df_analise.groupby("Tipo")["Valor"].sum().reset_index()
-                fig_tipo = px.pie(df_tipo, values="Valor", names="Tipo", 
-                                  title=f"Receita por Tipo de Obra em {ano_atual}", hole=0.4)
-                st.plotly_chart(fig_tipo, use_container_width=True)
-            else:
-                st.info(f"Sem dados de faturamento em {ano_atual}.")
-                
-        with c_cidade:
-            if not df_analise.empty:
-                # Soma os valores dos lançamentos por Cidade
-                df_cidade = df_analise.groupby("Cidade")["Valor"].sum().reset_index()
-                fig_cidade = px.bar(df_cidade, x="Cidade", y="Valor", 
-                                    title=f"Receita por Cidade em {ano_atual}", text_auto=True)
-                fig_cidade.update_layout(yaxis_title="Valor (R$)")
-                st.plotly_chart(fig_cidade, use_container_width=True)
-            else:
-                st.info(f"Sem dados de faturamento em {ano_atual}.")
+        # --- EXIBIÇÃO KPIs ---
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Receita Bruta", format_currency_br(receita_bruta))
+        c2.metric("Impostos (15.5%)", format_currency_br(impostos_pagos), delta="- Gov", delta_color="inverse")
+        c3.metric("Custos Fixos", format_currency_br(custos_fixos_pagos), delta="- Desp", delta_color="inverse")
+        c4.metric("Lucro Líquido Real", format_currency_br(lucro_liquido), delta=f"{margem_lucro:.1f}%")
+        c5.metric("Previsão Caixa", format_currency_br(a_receber - a_pagar), help="A Receber - A Pagar")
 
         st.markdown("---")
         
-        # --- FLUXO E ATRASOS ---
-        fg1, fg2 = st.columns(2)
-        
-        with fg1:
-            st.subheader(f"📈 Fluxo de Caixa ({ano_atual})")
-            if not df_ano_vigente.empty:
-                df_ano_vigente["Mes"] = df_ano_vigente["Vencimento"].dt.strftime("%Y-%m")
-                fluxo = df_ano_vigente.groupby("Mes")["Valor"].sum().reset_index()
-                fig_fluxo = px.bar(fluxo, x="Mes", y="Valor", text_auto=True, title="Entradas Previstas/Realizadas")
+        # --- GRÁFICOS ---
+        g1, g2 = st.columns(2)
+        with g1:
+            st.subheader(f"📊 Composição Financeira ({ano_atual})")
+            # Gráfico de Cascata (Waterfall) simulado com barras
+            dados_fin = pd.DataFrame({
+                "Categoria": ["Receita Bruta", "Impostos", "Custos Fixos", "Lucro Líquido"],
+                "Valor": [receita_bruta, -impostos_pagos, -custos_fixos_pagos, lucro_liquido]
+            })
+            fig_fin = px.bar(dados_fin, x="Categoria", y="Valor", text_auto=True, color="Categoria",
+                             color_discrete_sequence=["#2E86C1", "#E74C3C", "#E67E22", "#27AE60"])
+            st.plotly_chart(fig_fin, use_container_width=True)
+            
+        with g2:
+            st.subheader(f"📈 Fluxo Mensal ({ano_atual})")
+            # Agrupa Entradas
+            entradas_ano["Mes"] = entradas_ano["Vencimento"].dt.strftime("%Y-%m")
+            fluxo_ent = entradas_ano.groupby("Mes")["Valor"].sum().reset_index()
+            fluxo_ent["Tipo"] = "Entrada"
+            
+            # Agrupa Saídas (Impostos + Custos)
+            # Para simplificar o gráfico, vamos somar despesas pagas por mês
+            saidas_ano["Mes"] = saidas_ano["Vencimento"].dt.strftime("%Y-%m")
+            fluxo_sai = saidas_ano.groupby("Mes")["Valor"].sum().reset_index()
+            fluxo_sai["Tipo"] = "Saída"
+            
+            df_fluxo = pd.concat([fluxo_ent, fluxo_sai])
+            
+            if not df_fluxo.empty:
+                fig_fluxo = px.bar(df_fluxo, x="Mes", y="Valor", color="Tipo", barmode="group",
+                                   color_discrete_map={"Entrada": "#27AE60", "Saída": "#E74C3C"})
                 st.plotly_chart(fig_fluxo, use_container_width=True)
             else:
-                st.info(f"Nenhum lançamento para {ano_atual}.")
-            
-        with fg2:
-            st.subheader("🚨 Cobrança (Todas Pendências)")
-            if not atrasados_total.empty:
-                atrasados_view = pd.merge(atrasados_total, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
-                
-                # Formatação visual
-                atrasados_view["Vencimento_Fmt"] = atrasados_view["Vencimento"].apply(lambda x: format_date_br(x))
-                atrasados_view["Valor_Fmt"] = atrasados_view["Valor"].apply(lambda x: format_currency_br(x))
-                
-                st.dataframe(atrasados_view[["Cliente", "Descricao", "Vencimento_Fmt", "Valor_Fmt"]], 
-                             hide_index=True, use_container_width=True)
-            else:
-                st.success("Nenhuma conta atrasada! Parabéns.")
+                st.info("Sem dados mensais.")
 
 # ==============================================================================
-# ABA 3: CADASTRO PROJETOS (VISUAL LIMPO E EDITÁVEL)
+# ABA 3: CADASTRO PROJETOS
 # ==============================================================================
 elif aba == "Cadastro Projetos":
     st.header("📂 Projetos e Documentação")
-    
     if not df_projetos.empty and "Origem" in df_projetos.columns:
         lista_origens = sorted(df_projetos["Origem"].dropna().unique().tolist())
     else:
         lista_origens = []
 
-    # --- FORMULÁRIO (MANTIDO IGUAL) ---
     with st.expander("➕ Novo Projeto", expanded=False):
         with st.form("form_projeto", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -337,7 +314,6 @@ elif aba == "Cadastro Projetos":
                 link_prop = st.text_input("Link Pasta Financeiro/Proposta")
                 link_exec = st.text_input("Link Pasta Projetos/Executivo")
                 link_render = st.text_input("Link Pasta Renders")
-                
             if st.form_submit_button("Salvar Projeto"):
                 if cliente:
                     novo = pd.DataFrame([{
@@ -354,66 +330,40 @@ elif aba == "Cadastro Projetos":
 
     st.divider()
     st.subheader("Gerenciar Carteira")
-
     if df_projetos.empty:
-        st.info("Nenhum projeto cadastrado.")
+        st.info("Nenhum projeto.")
     else:
-        # Ordenar: Ativos primeiro
         df_view = df_projetos.sort_values(by="Status_Geral", ascending=True)
-
         for idx, row in df_view.iterrows():
-            # Ícone visual do status
             icon_status = "🟢" if row['Status_Geral'] == 'Ativo' else "🏁"
-            
-            # O EXPANDER É O NOME DO PROJETO
             with st.expander(f"{icon_status} {row['Cliente']} | {row['Cidade']}"):
-                
-                # Layout interno do Card
                 c_dados, c_links, c_edit = st.columns([2, 2, 2])
-                
-                # Coluna 1: Dados fixos
                 with c_dados:
                     st.caption("Detalhes:")
                     st.write(f"**Tipo:** {row['Tipo']}")
                     st.write(f"**Área:** {row['Area_m2']} m²")
-                    st.write(f"**Serviços:** {row['Servicos']}")
-                
-                # Coluna 2: Links (Blindados)
                 with c_links:
                     st.caption("Acesso Rápido:")
                     def criar_botao(label, url):
                         s_url = str(url).strip()
-                        if s_url and s_url.lower() != "nan":
-                            st.link_button(label, s_url)
-                    
+                        if s_url and s_url.lower() != "nan": st.link_button(label, s_url)
                     criar_botao("💰 Financeiro", row["Link_Proposta"])
                     criar_botao("📂 Projetos", row["Link_Pasta_Executivo"])
                     criar_botao("🖼️ Renders", row["Link_Pasta_Renders"])
-
-                # Coluna 3: Edição de Status
                 with c_edit:
                     st.caption("Controle:")
-                    # Seletor de Status
                     opcoes_status = ["Ativo", "Concluído", "Suspenso", "Cancelado"]
                     idx_st = opcoes_status.index(row['Status_Geral']) if row['Status_Geral'] in opcoes_status else 0
-                    
-                    novo_status = st.selectbox("Situação do Projeto", opcoes_status, index=idx_st, key=f"st_proj_{idx}")
-                    
-                    # Botão Salvar Específico deste projeto
-                    if st.button("Atualizar Status", key=f"btn_up_{idx}"):
+                    novo_status = st.selectbox("Situação", opcoes_status, index=idx_st, key=f"st_proj_{idx}")
+                    if st.button("Atualizar", key=f"btn_up_{idx}"):
                         if novo_status != row['Status_Geral']:
                             df_projetos.at[idx, "Status_Geral"] = novo_status
-                            
-                            # Log histórico
-                            hist = str(df_projetos.at[idx, "Historico_Log"])
-                            msg = f" | Status alterado para {novo_status} em {get_now_br()}"
-                            df_projetos.at[idx, "Historico_Log"] = hist + msg
-                            
                             save_data(df_projetos, "Projetos")
                             st.success("Atualizado!")
                             st.rerun()
+
 # ==============================================================================
-# ABA 4: CONTROLE DE TAREFAS (AJUSTE DE LAYOUT STATUS)
+# ABA 4: CONTROLE DE TAREFAS
 # ==============================================================================
 elif aba == "Controle de Tarefas":
     st.header("✅ Atividades e Timesheet")
@@ -430,7 +380,6 @@ elif aba == "Controle de Tarefas":
             d_ini = st.date_input("Início")
             d_fim = st.date_input("Prazo")
             link_t = st.text_input("Link Específico")
-
             if st.form_submit_button("Criar Tarefa"):
                 if proj:
                     id_p = df_projetos[df_projetos["Cliente"] == proj]["ID_Projeto"].values[0]
@@ -461,11 +410,9 @@ elif aba == "Controle de Tarefas":
                         c1.text(f"{row['Descricao']}")
                         c2.text(f"Até: {format_date_br(row['Data_Deadline'])}")
                         
-                        # MUDANÇA AQUI: Label dentro do componente para alinhar
                         novo_status = c3.selectbox("Status", ["A Fazer", "Em Andamento", "Revisão", "Concluído"], 
                                                    index=["A Fazer", "Em Andamento", "Revisão", "Concluído"].index(row['Status']), 
                                                    key=f"s_{idx}")
-                                                   
                         horas = c4.number_input("Horas Gastas", value=float(row.get("Horas_Gastas", 0.0)), step=0.5, key=f"h_{idx}")
                         
                         if c4.button("💾 Salvar", key=f"b_{idx}"):
@@ -475,29 +422,28 @@ elif aba == "Controle de Tarefas":
                                 df_tarefas.at[idx, "Data_Conclusao"] = get_now_br()
                             save_data(df_tarefas, "Tarefas")
                             st.rerun()
-
         st.markdown("---")
         with st.expander("✅ Histórico de Entregas"):
             concluidas = df_full[df_full["Status"] == "Concluído"]
             if not concluidas.empty:
                 for idx, row in concluidas.iterrows():
                     with st.container(border=True):
-                        col_a, col_b = st.columns([5, 1])
-                        col_a.markdown(f"~~**{row['Cliente']}** - {row['Descricao']}~~ (Entregue: {row.get('Data_Conclusao', '-')})")
-                        if col_b.button("Reabrir", key=f"re_{idx}"):
+                        c_a, c_b = st.columns([5, 1])
+                        c_a.markdown(f"~~**{row['Cliente']}** - {row['Descricao']}~~ (Entregue: {row.get('Data_Conclusao', '-')})")
+                        if c_b.button("Reabrir", key=f"re_{idx}"):
                             df_tarefas.at[idx, "Status"] = "Em Andamento"
                             df_tarefas.at[idx, "Data_Conclusao"] = ""
                             save_data(df_tarefas, "Tarefas")
                             st.rerun()
+
 # ==============================================================================
-# ABA 5: CONTROLE FINANCEIRO (TITULO LIMPO)
+# ABA 5: CONTROLE FINANCEIRO (Com Cálculo Automático de Imposto 15.5%)
 # ==============================================================================
 elif aba == "Controle Financeiro":
-    st.header("💰 Lançamentos e Baixas")
-    
+    st.header("💰 Lançamentos e Baixas (Entradas)")
     lista_projetos = df_projetos["Cliente"].unique().tolist()
     
-    with st.expander("➕ Novo Lançamento", expanded=True):
+    with st.expander("➕ Novo Lançamento (Receita)", expanded=True):
         with st.form("fin_form", clear_on_submit=True):
             c1, c2, c3 = st.columns([2, 2, 1])
             proj_fin = c1.selectbox("Projeto", lista_projetos)
@@ -508,67 +454,123 @@ elif aba == "Controle Financeiro":
             venc_fin = c4.date_input("Vencimento")
             status_fin = c5.selectbox("Status Inicial", ["Pendente", "Pago"])
             
-            if st.form_submit_button("Registrar Lançamento"):
+            if st.form_submit_button("Registrar"):
                 if proj_fin:
                     id_p = df_projetos[df_projetos["Cliente"] == proj_fin]["ID_Projeto"].values[0]
                     data_pg = str(venc_fin) if status_fin == "Pago" else ""
+                    # Se já nascer pago, calcula imposto
+                    val_imposto = (valor_fin * 0.155) if status_fin == "Pago" else 0.0
                     
                     novo_fin = pd.DataFrame([{
                         "ID_Lancamento": len(df_financeiro) + 1, "ID_Projeto": id_p,
                         "Descricao": desc_fin, "Valor": valor_fin,
-                        "Vencimento": str(venc_fin), "Status": status_fin, "Data_Pagamento": data_pg
+                        "Vencimento": str(venc_fin), "Status": status_fin, 
+                        "Data_Pagamento": data_pg, "Valor_Imposto": val_imposto
                     }])
-                    
                     df_final = pd.concat([df_financeiro, novo_fin], ignore_index=True)
                     df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
                     save_data(df_final, "Financeiro")
-                    st.success("Lançamento registrado!")
+                    st.success("Registrado!")
                     st.rerun()
     
     st.divider()
-    
     if not df_financeiro.empty:
         st.subheader("Extrato por Projeto")
         df_view = pd.merge(df_financeiro, df_projetos[["ID_Projeto", "Cliente"]], on="ID_Projeto", how="left")
         projetos_com_fin = df_view["Cliente"].unique()
         
-        if len(projetos_com_fin) == 0:
-            st.info("Nenhum lançamento encontrado.")
-        
         for cliente in projetos_com_fin:
             subset = df_view[df_view["Cliente"] == cliente]
-            
-            # Verifica se tem alguma pendência para definir a cor do ícone
             tem_pendencia = subset[subset["Status"] == "Pendente"].shape[0] > 0
             icone = "🔴" if tem_pendencia else "✅"
             
-            # TÍTULO LIMPO: Apenas ícone e nome do cliente
             with st.expander(f"{icone} {cliente}"):
-                
                 for idx, row in subset.iterrows():
                     with st.container(border=True):
                         c_desc, c_val, c_btn = st.columns([3, 2, 2])
-                        
                         c_desc.markdown(f"**{row['Descricao']}**")
-                        data_venc_fmt = format_date_br(row['Vencimento'])
                         
                         if row['Status'] == 'Pendente':
-                            c_desc.caption(f"Vence em: {data_venc_fmt}")
-                        else:
-                            c_desc.caption(f"Pago em: {format_date_br(row['Data_Pagamento'])}")
-                        
-                        c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
-                        
-                        if row['Status'] == 'Pendente':
-                            if c_btn.button("Receber", key=f"rec_{row['ID_Lancamento']}"):
+                            c_desc.caption(f"Vence: {format_date_br(row['Vencimento'])}")
+                            c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
+                            
+                            if c_btn.button("Receber (15.5% Imposto)", key=f"rec_{row['ID_Lancamento']}"):
                                 real_idx = df_financeiro[df_financeiro["ID_Lancamento"] == row["ID_Lancamento"]].index[0]
+                                
+                                # LÓGICA DO IMPOSTO AUTOMÁTICO
+                                valor_recebido = df_financeiro.at[real_idx, "Valor"]
+                                imposto_calculado = valor_recebido * 0.155
+                                
                                 df_financeiro.at[real_idx, "Status"] = "Pago"
                                 df_financeiro.at[real_idx, "Data_Pagamento"] = str(get_today_date())
+                                df_financeiro.at[real_idx, "Valor_Imposto"] = imposto_calculado
+                                
                                 df_financeiro["Vencimento"] = pd.to_datetime(df_financeiro["Vencimento"]).dt.strftime("%Y-%m-%d")
                                 save_data(df_financeiro, "Financeiro")
                                 st.balloons()
                                 st.rerun()
                         else:
+                            c_desc.caption(f"Pago: {format_date_br(row['Data_Pagamento'])}")
+                            c_val.markdown(f"**{format_currency_br(row['Valor'])}**")
+                            c_desc.caption(f"Imposto retido: {format_currency_br(row['Valor_Imposto'])}")
                             c_btn.success("Pago")
     else:
-        st.info("Nenhum lançamento financeiro registrado ainda.")
+        st.info("Nenhum lançamento.")
+
+# ==============================================================================
+# ABA 6: CONTROLE DESPESAS (CUSTOS FIXOS) - NOVO
+# ==============================================================================
+elif aba == "Controle Despesas":
+    st.header("📉 Custos Fixos e Despesas")
+    
+    with st.expander("➕ Lançar Despesa (Contador, Software...)", expanded=True):
+        with st.form("desp_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            desc_dsp = c1.text_input("Descrição (Ex: Contador Mensal)")
+            cat_dsp = c2.selectbox("Categoria", ["Contabilidade", "Software/Licenças", "Pro-labore", "Marketing", "Taxas", "Outros"])
+            val_dsp = c3.number_input("Valor (R$)", min_value=0.0, step=100.0)
+            
+            c4, c5 = st.columns(2)
+            venc_dsp = c4.date_input("Vencimento")
+            status_dsp = c5.selectbox("Status", ["Pendente", "Pago"])
+            
+            if st.form_submit_button("Registrar Despesa"):
+                data_pg = str(venc_dsp) if status_dsp == "Pago" else ""
+                
+                nova_dsp = pd.DataFrame([{
+                    "ID_Despesa": len(df_despesas) + 1, "Descricao": desc_dsp, "Categoria": cat_dsp,
+                    "Valor": val_dsp, "Vencimento": str(venc_dsp), "Status": status_dsp, "Data_Pagamento": data_pg
+                }])
+                df_final = pd.concat([df_despesas, nova_dsp], ignore_index=True)
+                df_final["Vencimento"] = pd.to_datetime(df_final["Vencimento"]).dt.strftime("%Y-%m-%d")
+                save_data(df_final, "Despesas")
+                st.success("Despesa salva!")
+                st.rerun()
+
+    st.divider()
+    if not df_despesas.empty:
+        st.subheader("Histórico de Despesas")
+        # Filtro de Ano/Mês opcional poderia vir aqui, mas vamos listar tudo ordenado
+        df_view = df_despesas.sort_values(by="Vencimento", ascending=False)
+        
+        for idx, row in df_view.iterrows():
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 2, 2])
+                c1.markdown(f"**{row['Descricao']}** ({row['Categoria']})")
+                
+                if row['Status'] == 'Pendente':
+                    c1.caption(f"Vence: {format_date_br(row['Vencimento'])}")
+                    c2.markdown(f"**{format_currency_br(row['Valor'])}**")
+                    if c3.button("Pagar", key=f"pag_{row['ID_Despesa']}"):
+                        real_idx = df_despesas[df_despesas["ID_Despesa"] == row["ID_Despesa"]].index[0]
+                        df_despesas.at[real_idx, "Status"] = "Pago"
+                        df_despesas.at[real_idx, "Data_Pagamento"] = str(get_today_date())
+                        df_despesas["Vencimento"] = pd.to_datetime(df_despesas["Vencimento"]).dt.strftime("%Y-%m-%d")
+                        save_data(df_despesas, "Despesas")
+                        st.rerun()
+                else:
+                    c1.caption(f"Pago: {format_date_br(row['Data_Pagamento'])}")
+                    c2.markdown(f"**{format_currency_br(row['Valor'])}**")
+                    c3.success("Pago")
+    else:
+        st.info("Nenhuma despesa registrada.")
